@@ -5,6 +5,7 @@
 #include <py4dgeo/searchtree.hpp>
 
 #include <Eigen/Core>
+#include <Eigen/LU>
 
 #include <algorithm>
 #include <array>
@@ -51,15 +52,16 @@ compute_distances(
       WorkingSetFinderParameters params1{
         epoch1, scale, corepoints.row(i), dir, max_distance
       };
-      EigenPointCloud subset1 = workingsetfinder(params1);
+      std::vector<IndexType> subset1 = workingsetfinder(params1);
       WorkingSetFinderParameters params2{
         epoch2, scale, corepoints.row(i), dir, max_distance
       };
-      EigenPointCloud subset2 = workingsetfinder(params2);
+      std::vector<IndexType> subset2 = workingsetfinder(params2);
 
       // Distance calculation
       DistanceUncertaintyCalculationParameters d_params{
-        subset1, subset2, corepoints.row(i), dir, registration_error
+        epoch1, subset1,           epoch2, subset2, corepoints.row(i),
+        dir,    registration_error
       };
       auto dist = distancecalculator(d_params);
 
@@ -73,7 +75,7 @@ compute_distances(
   vault.rethrow();
 }
 
-EigenPointCloud
+std::vector<IndexType>
 radius_workingset_finder(const WorkingSetFinderParameters& params)
 {
   // Get the proper radius search function
@@ -83,10 +85,10 @@ radius_workingset_finder(const WorkingSetFinderParameters& params)
   RadiusSearchResult points;
   radius_search(params.corepoint.row(0), points);
 
-  return params.epoch.cloud(points, Eigen::all);
+  return points;
 }
 
-EigenPointCloud
+std::vector<IndexType>
 cylinder_workingset_finder(const WorkingSetFinderParameters& params)
 {
   // Cut the cylinder into N segments, perform radius searches around the
@@ -142,7 +144,7 @@ cylinder_workingset_finder(const WorkingSetFinderParameters& params)
   }
 
   // Select only those indices that are within the cylinder
-  return params.epoch.cloud(merged, Eigen::all);
+  return merged;
 }
 
 double
@@ -162,12 +164,14 @@ mean_stddev_distance(const DistanceUncertaintyCalculationParameters& params)
 {
   std::tuple<double, DistanceUncertainty> ret;
 
-  Eigen::RowVector3d mean1 = params.workingset1.colwise().mean();
-  Eigen::RowVector3d mean2 = params.workingset2.colwise().mean();
+  auto workingset1 = params.epoch1.cloud(params.workingset1, Eigen::all);
+  auto workingset2 = params.epoch2.cloud(params.workingset2, Eigen::all);
+  Eigen::RowVector3d mean1 = workingset1.colwise().mean();
+  Eigen::RowVector3d mean2 = workingset2.colwise().mean();
   std::get<0>(ret) = params.normal.row(0).dot(mean2 - mean1);
 
-  double variance1 = variance(params.workingset1, mean1, params.normal);
-  double variance2 = variance(params.workingset2, mean2, params.normal);
+  double variance1 = variance(workingset1, mean1, params.normal);
+  double variance2 = variance(workingset2, mean2, params.normal);
 
   // Calculate the standard deviations for both point clouds
   double stddev1 = std::sqrt(variance1);
@@ -175,16 +179,15 @@ mean_stddev_distance(const DistanceUncertaintyCalculationParameters& params)
 
   // Calculate the level of detection from above variances
   double lodetection =
-    1.96 *
-    (std::sqrt(variance1 / static_cast<double>(params.workingset1.rows()) +
-               variance2 / static_cast<double>(params.workingset2.rows())) +
-     params.registration_error);
+    1.96 * (std::sqrt(variance1 / static_cast<double>(workingset1.rows()) +
+                      variance2 / static_cast<double>(workingset2.rows())) +
+            params.registration_error);
 
   std::get<1>(ret).lodetection = lodetection;
   std::get<1>(ret).spread1 = stddev1;
-  std::get<1>(ret).num_samples1 = params.workingset1.rows();
+  std::get<1>(ret).num_samples1 = workingset1.rows();
   std::get<1>(ret).spread2 = stddev2;
-  std::get<1>(ret).num_samples2 = params.workingset2.rows();
+  std::get<1>(ret).num_samples2 = workingset2.rows();
 
   return ret;
 }
@@ -233,9 +236,12 @@ median(Eigen::Matrix<double, Eigen::Dynamic, 1>& v)
 std::tuple<double, DistanceUncertainty>
 median_iqr_distance(const DistanceUncertaintyCalculationParameters& params)
 {
+  auto workingset1 = params.epoch1.cloud(params.workingset1, Eigen::all);
+  auto workingset2 = params.epoch2.cloud(params.workingset2, Eigen::all);
+
   // Calculate distributions across the cylinder axis
-  auto dist1 = (params.workingset1 * params.normal.row(0).transpose()).eval();
-  auto dist2 = (params.workingset2 * params.normal.row(0).transpose()).eval();
+  auto dist1 = (workingset1 * params.normal.row(0).transpose()).eval();
+  auto dist2 = (workingset2 * params.normal.row(0).transpose()).eval();
 
   // Find median and interquartile range of that distribution
   auto [med1, iqr1] = median(dist1);
@@ -244,14 +250,79 @@ median_iqr_distance(const DistanceUncertaintyCalculationParameters& params)
   return std::make_tuple(
     med2 - med1,
     DistanceUncertainty{
-      1.96 * (std::sqrt(
-                iqr1 * iqr1 / static_cast<double>(params.workingset1.rows()) +
-                iqr2 * iqr2 / static_cast<double>(params.workingset2.rows())) +
+      1.96 * (std::sqrt(iqr1 * iqr1 / static_cast<double>(workingset1.rows()) +
+                        iqr2 * iqr2 / static_cast<double>(workingset2.rows())) +
               params.registration_error),
       iqr1,
-      params.workingset1.rows(),
+      workingset1.rows(),
       iqr2,
-      params.workingset2.rows() });
+      workingset2.rows() });
+}
+
+std::tuple<Eigen::Vector3d, Eigen::Matrix3d>
+weighted_mean(EigenPointCloudConstRef points,
+              EigenCovarianceSetConstRef covariances)
+{
+  if (points.rows() == 0) {
+    return {
+      Eigen::Vector3d::Zero(), Eigen::Matrix3d::Identity() * 1e9
+    }; // Return a large covariance if no points are given
+  }
+  Eigen::Matrix3d N = Eigen::Matrix3d::Zero();
+  Eigen::Vector3d n = Eigen::Vector3d::Zero();
+  double q = 0;
+  for (size_t i = 0; i < points.rows(); ++i) {
+    Eigen::Matrix3d Q = to_covariance_matrix(covariances, i);
+    Eigen::Matrix3d P = Q.inverse();
+    auto b = points.row(i).transpose();
+    N += P;
+    n += P * b;
+    q += b.transpose() * P * b;
+  }
+  Eigen::Matrix3d Q = N.inverse();
+  Eigen::Vector3d p = Q * n;
+  double s0 = (q - n.transpose() * p) / (points.rows() * 3 - 3);
+  Eigen::Matrix3d C = s0 * Q;
+  return { p, C };
+}
+
+std::tuple<double, DistanceUncertainty>
+mean_pm_distance(const DistanceUncertaintyCalculationParameters& params)
+{
+  assert(params.epoch1.covariances.has_value() &&
+         params.epoch2.covariances.has_value());
+
+  std::tuple<double, DistanceUncertainty> ret;
+
+  auto points1 = params.epoch1.cloud(params.workingset1, Eigen::all);
+  auto covariances1 =
+    params.epoch1.covariances.value()(params.workingset1, Eigen::all);
+  auto points2 = params.epoch2.cloud(params.workingset2, Eigen::all);
+  auto covariances2 =
+    params.epoch2.covariances.value()(params.workingset2, Eigen::all);
+
+  auto [mean2, covariance2] = weighted_mean(points2, covariances2);
+  auto [mean1, covariance1] = weighted_mean(points1, covariances1);
+
+  Eigen::Vector3d normal = params.normal.transpose();
+  Eigen::Vector3d diff_vector = mean2 - mean1;
+  double distance = normal.transpose() * diff_vector;
+  double spread1 = normal.transpose() * covariance1 * normal;
+  double spread2 = normal.transpose() * covariance2 * normal;
+  double lod = 1.96 * std::sqrt(normal.transpose() *
+                                (covariance1 + covariance2) * normal) +
+               params.registration_error;
+
+  std::get<0>(ret) = distance;
+  std::get<1>(ret).lodetection = lod;
+  std::get<1>(ret).spread1 =
+    std::sqrt(spread1 * static_cast<double>(points1.rows()));
+  std::get<1>(ret).num_samples1 = points1.rows();
+  std::get<1>(ret).spread2 =
+    std::sqrt(spread2 * static_cast<double>(points2.rows()));
+  std::get<1>(ret).num_samples2 = points2.rows();
+
+  return ret;
 }
 
 } // namespace py4dgeo

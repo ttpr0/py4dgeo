@@ -45,6 +45,7 @@ class Epoch(_py4dgeo.Epoch):
         self,
         cloud: np.ndarray,
         normals: np.ndarray = None,
+        covariances: np.ndarray = None,
         additional_dimensions: np.ndarray = None,
         timestamp=None,
         scanpos_info: dict = None,
@@ -93,7 +94,10 @@ class Epoch(_py4dgeo.Epoch):
         self.additional_dimensions = additional_dimensions
 
         # Call base class constructor
-        super().__init__(cloud)
+        if covariances is not None:
+            super().__init__(cloud, covariances)
+        else:
+            super().__init__(cloud)
 
     @property
     def cloud(self):
@@ -134,6 +138,10 @@ class Epoch(_py4dgeo.Epoch):
             )
 
         return self._normals
+
+    @property
+    def covariances(self):
+        return self._covariances
 
     def calculate_normals(
         self, radius=1.0, orientation_vector: np.ndarray = np.array([0, 0, 1])
@@ -192,6 +200,9 @@ class Epoch(_py4dgeo.Epoch):
         new_epoch = Epoch(
             self.cloud.copy(),
             normals=self.normals.copy() if self.normals is not None else None,
+            covariances=(
+                self.covariances.copy() if self.covariances is not None else None
+            ),
             additional_dimensions=(
                 self.additional_dimensions.copy()
                 if self.additional_dimensions is not None
@@ -375,9 +386,14 @@ class Epoch(_py4dgeo.Epoch):
         if self._normals is None:
             self._normals = np.empty((1, 3))  # dummy array to avoid error in C++ code
         # Apply the actual transformation as efficient C++
-        _py4dgeo.transform_pointcloud_inplace(
-            self.cloud, trafo, reduction_point, self._normals
-        )
+        if self._covariances is None:
+            _py4dgeo.transform_pointcloud_inplace(
+                self.cloud, trafo, reduction_point, self._normals
+            )
+        else:
+            _py4dgeo.transform_pointcloud_inplace(
+                self.cloud, trafo, reduction_point, self._normals, self._covariances
+            )
 
         # Store the transformation
         self._transformations.append(

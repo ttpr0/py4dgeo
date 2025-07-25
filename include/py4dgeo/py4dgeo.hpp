@@ -43,8 +43,27 @@ using EigenNormalSetRef = Eigen::Ref<EigenNormalSet>;
 /** @brief An immutable reference to a set of normal vectors on a point cloud */
 using EigenNormalSetConstRef = Eigen::Ref<const EigenNormalSet>;
 
+/** @brief The C++ type to represent a set of point covariances on a point cloud
+ *
+ * The covariances are stored in a flattened 9x1 vector (row-major).
+ */
+using EigenCovarianceSet =
+  Eigen::Matrix<double, Eigen::Dynamic, 9, Eigen::RowMajor>;
+
+/** @brief A mutable reference to a set of point covariances on a point cloud */
+using EigenCovarianceSetRef = Eigen::Ref<EigenCovarianceSet>;
+
+/** @brief An immutable reference to a set of point covariances on a point cloud
+ */
+using EigenCovarianceSetConstRef = Eigen::Ref<const EigenCovarianceSet>;
+
 /** @brief The type used for point cloud indices */
 using IndexType = Eigen::Index;
+
+/** @brief Convert a 9x1 covariance vector to a 3x3 matrix */
+Eigen::Matrix3d
+to_covariance_matrix(const EigenCovarianceSetConstRef cov,
+                     const IndexType index);
 
 /** @brief Return structure for the uncertainty of the distance computation
  *

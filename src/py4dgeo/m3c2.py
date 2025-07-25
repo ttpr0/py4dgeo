@@ -30,6 +30,7 @@ class M3C2LikeAlgorithm(abc.ABC):
         max_distance: float = 0.0,
         registration_error: float = 0.0,
         robust_aggr: bool = False,
+        precision_maps: bool = False,
     ):
         self.epochs = epochs
         self.corepoints = corepoints
@@ -38,6 +39,7 @@ class M3C2LikeAlgorithm(abc.ABC):
         self.max_distance = max_distance
         self.registration_error = registration_error
         self.robust_aggr = robust_aggr
+        self.precision_maps = precision_maps
 
     @property
     def corepoints(self):
@@ -125,7 +127,10 @@ class M3C2LikeAlgorithm(abc.ABC):
         if self.robust_aggr:
             return _py4dgeo.median_iqr_distance
         else:
-            return _py4dgeo.mean_stddev_distance
+            if self.precision_maps:
+                return _py4dgeo.mean_pm_distance
+            else:
+                return _py4dgeo.mean_stddev_distance
 
 
 class M3C2(M3C2LikeAlgorithm):

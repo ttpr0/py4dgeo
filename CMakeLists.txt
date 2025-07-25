@@ -49,6 +49,7 @@ add_library(
   lib/distances.cpp
   lib/epoch.cpp
   lib/kdtree.cpp
+  lib/py4dgeo.cpp
   lib/octree.cpp
   lib/registration.cpp
   lib/segmentation.cpp

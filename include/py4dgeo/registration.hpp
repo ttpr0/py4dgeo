@@ -26,6 +26,13 @@ transform_pointcloud_inplace(EigenPointCloudRef cloud,
                              EigenPointCloudConstRef reduction_point,
                              EigenNormalSetRef normals);
 
+void
+transform_pointcloud_inplace(EigenPointCloudRef cloud,
+                             const Transformation& trafo,
+                             EigenPointCloudConstRef reduction_point,
+                             EigenNormalSetRef normals,
+                             EigenCovarianceSetRef covariances);
+
 /** Union/Find data structure */
 class DisjointSet
 {

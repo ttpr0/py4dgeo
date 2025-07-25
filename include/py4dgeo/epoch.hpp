@@ -7,6 +7,7 @@
 
 #include <iostream>
 #include <memory>
+#include <optional>
 
 namespace py4dgeo {
 
@@ -22,6 +23,7 @@ public:
   // Constructors
   Epoch(const EigenPointCloudRef&);
   Epoch(std::shared_ptr<EigenPointCloud>);
+  Epoch(const EigenPointCloudRef&, const EigenCovarianceSetRef&);
 
   // Methods for (de)serialization
   static std::unique_ptr<Epoch> from_stream(std::istream&);
@@ -66,6 +68,7 @@ public:
   EigenPointCloudRef cloud;
   KDTree kdtree;
   Octree octree;
+  std::optional<EigenCovarianceSetRef> covariances;
 
   // We can add a collection of metadata here
 };

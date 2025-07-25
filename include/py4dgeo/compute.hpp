@@ -20,9 +20,9 @@ struct WorkingSetFinderParameters
   /** @brief The search radius*/
   double radius;
   /** @brief The (single) core point that we are dealing with */
-  EigenPointCloudConstRef corepoint;
+  Eigen::RowVector3d corepoint;
   /** @brief The cylinder axis direction */
-  EigenNormalSetConstRef cylinder_axis;
+  Eigen::RowVector3d cylinder_axis;
   /** @brief The maximum cylinder (half) length*/
   double max_distance;
 };
@@ -30,20 +30,24 @@ struct WorkingSetFinderParameters
 /** @brief The callback type that determines the point cloud working subset in
  * the vicinity of a core point */
 using WorkingSetFinderCallback =
-  std::function<EigenPointCloud(const WorkingSetFinderParameters&)>;
+  std::function<std::vector<IndexType>(const WorkingSetFinderParameters&)>;
 
 /** @brief The parameter struct for @ref DistanceUncertaintyCalculationCallback
  */
 struct DistanceUncertaintyCalculationParameters
 {
+  /** @brief The first epoch that we are operating on */
+  const Epoch& epoch1;
   /** @brief The point cloud in the first epoch to operate on */
-  EigenPointCloudConstRef workingset1;
+  std::vector<IndexType>& workingset1;
+  /** @brief The second epoch that we are operating on */
+  const Epoch& epoch2;
   /** @brief The point cloud in the second epoch to operate on */
-  EigenPointCloudConstRef workingset2;
+  std::vector<IndexType>& workingset2;
   /** @brief The (single) core point that we are dealing with */
-  EigenPointCloudConstRef corepoint;
+  Eigen::RowVector3d corepoint;
   /** @brief The surface normal at the current core point */
-  EigenNormalSetConstRef normal;
+  Eigen::RowVector3d normal;
   /** @brief The registration error */
   double registration_error;
 };
@@ -58,12 +62,12 @@ using DistanceUncertaintyCalculationCallback =
 
 /** @brief Implementation of working set finder that performs a regular radius
  * search */
-EigenPointCloud
+std::vector<IndexType>
 radius_workingset_finder(const WorkingSetFinderParameters&);
 
 /** @brief Implementation of a working set finder that performs a cylinder
  * search */
-EigenPointCloud
+std::vector<IndexType>
 cylinder_workingset_finder(const WorkingSetFinderParameters&);
 
 /** @brief Mean-based implementation of point cloud distance
@@ -82,6 +86,10 @@ mean_stddev_distance(const DistanceUncertaintyCalculationParameters&);
  */
 std::tuple<double, DistanceUncertainty>
 median_iqr_distance(const DistanceUncertaintyCalculationParameters&);
+
+/** @brief PM-based implementation of point cloud distance */
+std::tuple<double, DistanceUncertainty>
+mean_pm_distance(const DistanceUncertaintyCalculationParameters& params);
 
 /* Compute interfaces used in the M3C2 main algorithm */
 

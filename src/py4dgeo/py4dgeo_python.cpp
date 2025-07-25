@@ -78,11 +78,15 @@ PYBIND11_MODULE(_py4dgeo, m)
   // Initializing with a numpy array prevents the numpy array from being
   // garbage collected as long as the Epoch object is alive
   epoch.def(py::init<EigenPointCloudRef>(), py::keep_alive<1, 2>());
+  epoch.def(py::init<EigenPointCloudRef, EigenCovarianceSetRef>(),
+            py::keep_alive<1, 2>(),
+            py::keep_alive<1, 3>());
 
   // We can directly access the point cloud, the kdtree and the octree
   epoch.def_readwrite("_cloud", &Epoch::cloud);
   epoch.def_readwrite("_kdtree", &Epoch::kdtree);
   epoch.def_readwrite("_octree", &Epoch::octree);
+  epoch.def_readwrite("_covariances", &Epoch::covariances);
 
   epoch.def(
     "_radius_search",
@@ -729,6 +733,21 @@ PYBIND11_MODULE(_py4dgeo, m)
 
           transform_pointcloud_inplace(cloud, trafo, rp, normals);
         });
+  m.def("transform_pointcloud_inplace",
+        [](EigenPointCloudRef cloud,
+           const py::array_t<double>& t,
+           EigenPointCloudConstRef rp,
+           EigenNormalSetRef normals,
+           EigenCovarianceSetRef covs) {
+          Transformation trafo;
+
+          auto r = t.unchecked<2>();
+          for (IndexType i = 0; i < 4; ++i)
+            for (IndexType j = 0; j < 4; ++j)
+              trafo(i, j) = r(i, j);
+
+          transform_pointcloud_inplace(cloud, trafo, rp, normals, covs);
+        });
 
   // The main algorithms for the spatiotemporal segmentations
   m.def("region_growing",
@@ -745,6 +764,7 @@ PYBIND11_MODULE(_py4dgeo, m)
   m.def("cylinder_workingset_finder", &cylinder_workingset_finder);
   m.def("mean_stddev_distance", &mean_stddev_distance);
   m.def("median_iqr_distance", &median_iqr_distance);
+  m.def("mean_pm_distance", &mean_pm_distance);
   m.def("dtw_distance", &dtw_distance);
   m.def("normalized_dtw_distance", &normalized_dtw_distance);
 

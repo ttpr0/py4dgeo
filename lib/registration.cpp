@@ -35,6 +35,30 @@ transform_pointcloud_inplace(EigenPointCloudRef cloud,
     normals.transpose() = (trafo.linear() * normals.transpose()).transpose();
 }
 
+void
+transform_pointcloud_inplace(EigenPointCloudRef cloud,
+                             const Transformation& trafo,
+                             EigenPointCloudConstRef reduction_point,
+                             EigenNormalSetRef normals,
+                             EigenCovarianceSetRef covariances)
+{
+  cloud.transpose() =
+    (trafo.linear() * (cloud.rowwise() - reduction_point.row(0)).transpose())
+      .colwise() +
+    (trafo.translation() + reduction_point.row(0).transpose());
+
+  if (normals.size() == cloud.rows())
+    normals.transpose() = (trafo.linear() * normals.transpose()).transpose();
+
+  if (covariances.size() == cloud.rows()) {
+    for (size_t i = 0; i < covariances.rows(); i++) {
+      Eigen::Matrix3d cov = to_covariance_matrix(covariances, i);
+      cov = trafo.linear() * cov * trafo.linear().transpose();
+      covariances.row(i) = cov.reshaped<Eigen::RowMajor>(9, 1);
+    }
+  }
+}
+
 DisjointSet::DisjointSet(IndexType size)
   : size_(size)
   , numbers_(size, 0)

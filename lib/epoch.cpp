@@ -25,6 +25,16 @@ Epoch::Epoch(std::shared_ptr<EigenPointCloud> cloud_)
 {
 }
 
+Epoch::Epoch(const EigenPointCloudRef& cloud_,
+             const EigenCovarianceSetRef& covs_)
+  : owned_cloud(nullptr)
+  , cloud(cloud_)
+  , kdtree(cloud_)
+  , octree(cloud_)
+  , covariances(covs_)
+{
+}
+
 SearchTree Epoch::default_radius_search_tree = SearchTree::KDTree;
 SearchTree Epoch::default_nearest_neighbor_tree = SearchTree::KDTree;
 

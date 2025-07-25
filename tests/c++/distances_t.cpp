@@ -111,7 +111,8 @@ TEST_CASE("Cylinder Search Correctness", "[compute]")
   WorkingSetFinderParameters params{
     epoch, 1.0, corepoint.row(0), normal.row(0), 5.0
   };
-  auto cyl = cylinder_workingset_finder(params);
+  auto subset = cylinder_workingset_finder(params);
+  auto cyl = epoch.cloud(subset, Eigen::all);
 
   REQUIRE(cyl.rows() == 23);
 
