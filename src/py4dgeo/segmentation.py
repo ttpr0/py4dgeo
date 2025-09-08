@@ -410,6 +410,8 @@ class SpatiotemporalAnalysis:
             with logger_context(f"Adding epoch {i+1}/{len(epochs)} to analysis object"):
                 # Prepare the M3C2 instance
                 self.m3c2.corepoints = self.corepoints.cloud
+                if self.corepoints.normals is not None:
+                    self.m3c2.corepoint_normals = self.corepoints.normals
                 self.m3c2.epochs = (reference_epoch, epoch)
 
                 # Calculate the M3C2 distances

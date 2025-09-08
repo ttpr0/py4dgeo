@@ -283,6 +283,7 @@ weighted_mean(EigenPointCloudConstRef points,
   Eigen::Vector3d p = Q * n;
   double s0 = (q - n.transpose() * p) / (points.rows() * 3 - 3);
   Eigen::Matrix3d C = s0 * Q;
+  p = points.colwise().mean().transpose();
   return { p, C };
 }
 
