@@ -553,6 +553,16 @@ PYBIND11_MODULE(_py4dgeo, m)
         &compute_correspondence_distances,
         "Compute correspondence distances");
 
+  // The main distance computation function that is the main entry point of M3C2
+  m.def(
+    "pointcloud_stacking",
+    [](const Epoch& epoch, double radius, double max_distance) {
+      py::gil_scoped_release release_gil;
+      Epoch out_epoch = pointcloud_stacking(epoch, radius, max_distance);
+      return out_epoch;
+    },
+    "Point-Cloud Stacking Algorithm (Blanch et al., 2021)");
+
   // Callback parameter structs
   py::class_<WorkingSetFinderParameters> ws_params(
     m, "WorkingSetFinderParameters");

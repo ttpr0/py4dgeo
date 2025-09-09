@@ -21,6 +21,7 @@ from py4dgeo.segmentation import (
     regular_corepoint_grid,
     temporal_averaging,
 )
+from py4dgeo.pcstacking import pointcloud_stacking
 from py4dgeo.util import (
     __version__,
     find_file,

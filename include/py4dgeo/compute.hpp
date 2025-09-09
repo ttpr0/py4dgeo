@@ -123,4 +123,7 @@ compute_correspondence_distances(const Epoch&,
                                  std::vector<EigenPointCloud>,
                                  unsigned int);
 
-}
+Epoch
+pointcloud_stacking(const Epoch& epoch, double radius, double max_distance);
+
+} // namespace py4dgeo

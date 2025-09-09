@@ -95,7 +95,9 @@ class Epoch(_py4dgeo.Epoch):
 
         # Call base class constructor
         if covariances is not None:
-            covariances = make_contiguous(as_double_precision(covariances)).reshape(-1, 9)
+            covariances = make_contiguous(as_double_precision(covariances)).reshape(
+                -1, 9
+            )
             super().__init__(cloud, covariances)
         else:
             super().__init__(cloud)
