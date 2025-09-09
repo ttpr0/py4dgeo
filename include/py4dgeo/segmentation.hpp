@@ -125,4 +125,10 @@ predict_change_point_detection(EigenTimeSeriesConstRef,
                                IndexType,
                                double);
 
+/** @brief Applies temporal filtering on the time series of distances */
+std::tuple<EigenSpatiotemporalArray, EigenSpatiotemporalArray>
+weighted_average_filtering(EigenSpatiotemporalArrayConstRef,
+                           EigenSpatiotemporalArrayConstRef,
+                           int);
+
 } // namespace py4dgeo

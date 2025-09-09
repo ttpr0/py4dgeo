@@ -839,6 +839,7 @@ class RegionGrowingAlgorithm(RegionGrowingAlgorithmBase):
         resume_from_seed=0,
         stop_at_seed=np.inf,
         write_nr_seeds=False,
+        check_seed_significance=False,
         **kwargs,
     ):
         """Construct the 4D-OBC algorithm.
@@ -903,7 +904,11 @@ class RegionGrowingAlgorithm(RegionGrowingAlgorithmBase):
             This can be used to split up the consecutive 4D-OBC segmentation into different subsets.
             Default is False, meaning no txt file is written.
         :type write_nr_seeds: bool
-        """
+        :param check_seed_significance:
+            If True, a statistical significance test is applied to the detected seed candidates.
+            This can help to reduce the number of seeds, especially when the time series are noisy.
+            Default is False, meaning no significance test is applied.
+        :type check_seed_significance: bool"""
 
         # Initialize base class
         super().__init__(**kwargs)
@@ -922,6 +927,7 @@ class RegionGrowingAlgorithm(RegionGrowingAlgorithmBase):
         self.resume_from_seed = resume_from_seed
         self.stop_at_seed = stop_at_seed
         self.write_nr_seeds = write_nr_seeds
+        self.check_seed_significance = check_seed_significance
 
     def find_seedpoints(self):
         """Calculate seedpoints for the region growing algorithm"""
@@ -1038,6 +1044,35 @@ class RegionGrowingAlgorithm(RegionGrowingAlgorithmBase):
 
             # Add all the seeds found for this corepoint to the full list
             seeds.extend(corepoint_seeds)
+
+        if self.check_seed_significance:
+            filtered_seeds = []
+            for seed in seeds:
+                distance_start = self.analysis.distances_for_compute[
+                    seed.index, seed.start_epoch
+                ]
+                variance_start = np.sqrt(
+                    self.analysis.uncertainties[seed.index, seed.start_epoch, "spread2"]
+                    ** 2
+                    / self.analysis.uncertainties[
+                        seed.index, seed.start_epoch, "num_samples2"
+                    ]
+                )
+                distance_end = self.analysis.distances_for_compute[
+                    seed.index, seed.end_epoch
+                ]
+                variance_end = np.sqrt(
+                    self.analysis.uncertainties[seed.index, seed.end_epoch, "spread2"]
+                    ** 2
+                    / self.analysis.uncertainties[
+                        seed.index, seed.end_epoch, "num_samples2"
+                    ]
+                )
+                distance_diff = np.abs(distance_end - distance_start)
+                variance_diff = np.sqrt(variance_start**2 + variance_end**2)
+                if distance_diff > 1.96 * variance_diff:  # 95% confidence interval
+                    filtered_seeds.append(seed)
+            seeds = filtered_seeds
 
         return seeds
 
@@ -1282,3 +1317,146 @@ def temporal_averaging(distances, smoothing_window=24):
 
         # We use no-op smooting as the default implementation here
         return smoothed
+
+
+def weighted_temporal_averaging(distances, uncertainties, smoothing_window=24):
+    """Smoothen a space-time array of distance change using a sliding window approach
+
+    :param distances:
+        The raw data to smoothen.
+    :type distances: np.ndarray
+    :param smoothing_window:
+        The size of the sliding window used in smoothing the data. The
+        default value of 0 does not perform any smooting.
+    :type smooting_window: int
+    """
+
+    distance_uncertainties = np.sqrt(
+        uncertainties["spread2"] ** 2 / uncertainties["num_samples2"]
+    )
+    smoothed_uncertainties = distance_uncertainties.copy()
+    with logger_context("Smoothing temporal data"):
+        smoothed, _uncertainties = _py4dgeo.weighted_average_filtering(
+            distances, distance_uncertainties, smoothing_window
+        )
+        smoothed_uncertainties["spread2"] = np.sqrt(
+            _uncertainties**2 * smoothed_uncertainties["num_samples2"]
+        )
+        smoothed_uncertainties["lodetection"] = 1.96 * np.sqrt(
+            smoothed_uncertainties["spread2"] ** 2
+            / smoothed_uncertainties["num_samples2"]
+            + smoothed_uncertainties["spread1"] ** 2
+            / smoothed_uncertainties["num_samples1"]
+        )
+        return smoothed, smoothed_uncertainties
+
+
+def obc_fusion(
+    obc_list: list[ObjectByChange],
+    spatial_iou_threshold: float = 0.1,
+    temporal_iou_threshold: float = 0.7,
+) -> list[ObjectByChange]:
+    """
+    Fuses a list of 4D-OBC objects based on the procedure in Ulm et al., 2025.
+
+    The fusion logic identifies groups of related 4D-OBCs and merges them.
+    Two OBCs are considered related if they meet three criteria:
+    1. They have the same sign of change (e.g., both are erosion events).
+    2. Their spatial Intersection over Union (IoU) exceeds the spatial threshold.
+    3. Their temporal Intersection over Union (IoU) exceeds the temporal threshold.
+
+    :param  obc_list: A list of ObjectByChange objects to be fused.
+    :type obc_list: list[ObjectByChange]
+    :param spatial_iou_threshold: The minimum spatial IoU for two objects to be
+                                   considered overlapping. Defaults to 0.1, as per the paper.
+    :type spatial_iou_threshold: float
+    :param temporal_iou_threshold: The minimum temporal IoU for two objects to be
+                                   considered overlapping. Defaults to 0.7, as per the paper.
+    :type temporal_iou_threshold: float
+    :return: A new list containing the fused 4D-OBC objects.
+    """
+    num_obcs = len(obc_list)
+    if num_obcs <= 1:
+        return obc_list
+
+    # 1. Build a graph where an edge exists between two OBCs if they should be fused.
+    adj_list = [[] for _ in range(num_obcs)]
+    for i in range(num_obcs):
+        for j in range(i + 1, num_obcs):
+            obc1 = obc_list[i]
+            obc2 = obc_list[j]
+            # check sign
+            sign1 = 1 if obc1._data.threshold > 0 else -1
+            sign2 = 1 if obc2._data.threshold > 0 else -1
+            if sign1 != sign2:
+                continue
+            # check spatial overlap
+            points1 = set(obc1._data.indices_distances.keys())
+            points2 = set(obc2._data.indices_distances.keys())
+            intersection_spatial = len(points1.intersection(points2))
+            union_spatial = len(points1.union(points2))
+            if union_spatial == 0:
+                iou_spatial = 0.0
+            else:
+                iou_spatial = intersection_spatial / union_spatial
+            if iou_spatial < spatial_iou_threshold:
+                continue
+            # check temporal overlap
+            epochs1 = set(range(obc1._data.start_epoch, obc1._data.end_epoch + 1))
+            epochs2 = set(range(obc2._data.start_epoch, obc2._data.end_epoch + 1))
+            intersection_temporal = len(epochs1.intersection(epochs2))
+            union_temporal = len(epochs1.union(epochs2))
+            if union_temporal == 0:
+                iou_temporal = 0.0
+            else:
+                iou_temporal = intersection_temporal / union_temporal
+            if iou_temporal < temporal_iou_threshold:
+                continue
+
+            adj_list[i].append(j)
+            adj_list[j].append(i)
+
+    # find connected components in the graph
+    def _dfs_find_component(
+        node_idx: int,
+        adj_list: list[list[int]],
+        visited: list[bool],
+        component: list[int],
+    ):
+        visited[node_idx] = True
+        component.append(node_idx)
+        for neighbor in adj_list[node_idx]:
+            if not visited[neighbor]:
+                _dfs_find_component(neighbor, adj_list, visited, component)
+
+    visited = [False] * num_obcs
+    all_components = []
+    for i in range(num_obcs):
+        if not visited[i]:
+            component_indices = []
+            _dfs_find_component(i, adj_list, visited, component_indices)
+            all_components.append(component_indices)
+
+    # merge connected obc
+    fused_obcs = []
+    for component_indices in all_components:
+        if not component_indices:
+            continue
+        component_obcs = [obc_list[i] for i in component_indices]
+        fused_indices = {}
+        for obc in component_obcs:
+            fused_indices.update(obc._data.indices_distances)
+        min_start_epoch = min(obc._data.start_epoch for obc in component_obcs)
+        max_end_epoch = max(obc._data.end_epoch for obc in component_obcs)
+        base_obc = component_obcs[0]
+        fused_data = _py4dgeo.ObjectByChange(
+            indices_distances=fused_indices,
+            start_epoch=min_start_epoch,
+            end_epoch=max_end_epoch,
+            threshold=base_obc._data.threshold,
+        )
+        fused_obc = ObjectByChange(
+            _data=fused_data, analysis=base_obc._analysis, seed=base_obc.seed
+        )
+        fused_obcs.append(fused_obc)
+    return fused_obcs

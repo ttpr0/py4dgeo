@@ -769,6 +769,8 @@ PYBIND11_MODULE(_py4dgeo, m)
         });
   m.def("change_point_detection", &change_point_detection);
 
+  m.def("weighted_average_filtering", &weighted_average_filtering);
+
   // Callback implementations
   m.def("radius_workingset_finder", &radius_workingset_finder);
   m.def("cylinder_workingset_finder", &cylinder_workingset_finder);

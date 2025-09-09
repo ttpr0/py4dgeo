@@ -541,4 +541,83 @@ change_point_detection(const ChangePointDetectionData& data)
   return changepoints;
 }
 
+std::tuple<EigenSpatiotemporalArray, EigenSpatiotemporalArray>
+weighted_average_filtering(EigenSpatiotemporalArrayConstRef distances,
+                           EigenSpatiotemporalArrayConstRef uncertainties,
+                           int window_size)
+{
+  if (distances.rows() != uncertainties.rows() ||
+      distances.cols() != uncertainties.cols()) {
+    throw std::runtime_error{
+      "Distance and uncertainty arrays have different shapes"
+    };
+  }
+
+  EigenSpatiotemporalArray filtered =
+    EigenSpatiotemporalArray::Zero(distances.rows(), distances.cols());
+  EigenSpatiotemporalArray filtered_uncertainties =
+    EigenSpatiotemporalArray::Zero(distances.rows(), distances.cols());
+
+  std::vector<double> weights(window_size);
+#pragma omp parallel for firstprivate(weights)
+  for (int i = 0; i < distances.rows(); ++i) {
+    for (int j = 0; j < distances.cols(); ++j) {
+      int start = std::max(0, j - window_size / 2);
+      int end =
+        std::min(static_cast<int>(distances.cols() - 1), j + window_size / 2);
+      double weight_sum = 0.0;
+      for (int k = start; k <= end; ++k) {
+        double weight = 0.0;
+        if (!std::isnan(uncertainties(i, k)) && !std::isnan(distances(i, k)) &&
+            uncertainties(i, k) > 0.0) {
+          weight = 1.0 / std::sqrt(uncertainties(i, k));
+        }
+        weights[k - start] = weight;
+        weight_sum += weight;
+      }
+      while (true) {
+        int f = -1;
+        double mean = 0.0;
+        for (int k = start; k <= end; ++k) {
+          if (weights[k - start] > 0.0) {
+            mean += weights[k - start] * distances(i, k);
+            f += 1;
+          }
+        }
+        mean /= weight_sum;
+        double s0 = 0.0;
+        for (int k = start; k <= end; ++k) {
+          if (weights[k - start] > 0.0) {
+            s0 += weights[k - start] * std::pow(distances(i, k) - mean, 2);
+          }
+        }
+        s0 = std::sqrt(s0 / f);
+        double max_w = 0.0;
+        int max_w_index = -1;
+        for (int k = start; k <= end; ++k) {
+          if (weights[k - start] > 0.0) {
+            double v = distances(i, k) - mean;
+            double w =
+              v / (s0 * std::sqrt(1.0 / weights[k - start] - 1.0 / weight_sum));
+            if (std::fabs(w) > 3.0 && std::fabs(w) > max_w) {
+              max_w = std::fabs(w);
+              max_w_index = k - start;
+            }
+          }
+        }
+        if (max_w_index == -1) {
+          filtered(i, j) = mean;
+          filtered_uncertainties(i, j) = s0 * std::sqrt(1.0 / weight_sum);
+          break;
+        } else {
+          weight_sum -= weights[max_w_index];
+          weights[max_w_index] = 0.0;
+        }
+      }
+    }
+  }
+
+  return { std::move(filtered), std::move(filtered_uncertainties) };
+}
+
 }
