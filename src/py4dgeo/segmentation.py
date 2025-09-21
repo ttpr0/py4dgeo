@@ -1046,32 +1046,37 @@ class RegionGrowingAlgorithm(RegionGrowingAlgorithmBase):
             seeds.extend(corepoint_seeds)
 
         if self.check_seed_significance:
+            logger.info("Filtering seeds based on significance")
             filtered_seeds = []
             for seed in seeds:
                 distance_start = self.analysis.distances_for_compute[
                     seed.index, seed.start_epoch
                 ]
                 variance_start = np.sqrt(
-                    self.analysis.uncertainties[seed.index, seed.start_epoch, "spread2"]
+                    self.analysis.uncertainties[seed.index, seed.start_epoch]["spread2"]
                     ** 2
-                    / self.analysis.uncertainties[
-                        seed.index, seed.start_epoch, "num_samples2"
+                    / self.analysis.uncertainties[seed.index, seed.start_epoch][
+                        "num_samples2"
                     ]
                 )
                 distance_end = self.analysis.distances_for_compute[
                     seed.index, seed.end_epoch
                 ]
                 variance_end = np.sqrt(
-                    self.analysis.uncertainties[seed.index, seed.end_epoch, "spread2"]
+                    self.analysis.uncertainties[seed.index, seed.end_epoch]["spread2"]
                     ** 2
-                    / self.analysis.uncertainties[
-                        seed.index, seed.end_epoch, "num_samples2"
+                    / self.analysis.uncertainties[seed.index, seed.end_epoch][
+                        "num_samples2"
                     ]
                 )
                 distance_diff = np.abs(distance_end - distance_start)
                 variance_diff = np.sqrt(variance_start**2 + variance_end**2)
+                print("distance_diff", distance_diff, "variance_diff", variance_diff)
                 if distance_diff > 1.96 * variance_diff:  # 95% confidence interval
                     filtered_seeds.append(seed)
+            logger.info(
+                f"Filtered out {len(seeds) - len(filtered_seeds)}/{len(seeds)} seeds"
+            )
             seeds = filtered_seeds
 
         return seeds
@@ -1382,6 +1387,7 @@ def obc_fusion(
     :type temporal_iou_threshold: float
     :return: A new list containing the fused 4D-OBC objects.
     """
+    logger.info("Fusing 4D-OBCs...")
     num_obcs = len(obc_list)
     if num_obcs <= 1:
         return obc_list
@@ -1466,4 +1472,5 @@ def obc_fusion(
             _data=fused_data, analysis=base_obc._analysis, seed=base_obc.seed
         )
         fused_obcs.append(fused_obc)
+    logger.info(f"Combined {num_obcs} 4D-OBCs into {len(fused_obcs)} fused 4D-OBCs.")
     return fused_obcs
