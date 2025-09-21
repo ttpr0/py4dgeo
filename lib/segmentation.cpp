@@ -558,6 +558,170 @@ weighted_average_filtering(EigenSpatiotemporalArrayConstRef distances,
   EigenSpatiotemporalArray filtered_uncertainties =
     EigenSpatiotemporalArray::Zero(distances.rows(), distances.cols());
 
+#pragma omp parallel for
+  for (int i = 0; i < distances.rows(); ++i) {
+    for (int j = 0; j < distances.cols(); ++j) {
+      int start = std::max(0, j - window_size / 2);
+      int end =
+        std::min(static_cast<int>(distances.cols() - 1), j + window_size / 2);
+
+      double N = 0.0;
+      double n = 0.0;
+      double q = 0.0;
+      int f = -1;
+      for (int k = start; k <= end; ++k) {
+        double weight = 0.0;
+        if (!std::isnan(uncertainties(i, k)) && !std::isnan(distances(i, k)) &&
+            uncertainties(i, k) > 0.0) {
+          weight = 1.0 / uncertainties(i, k);
+          f += 1;
+        }
+        N += weight;
+        n += weight * distances(i, k);
+        q += weight * distances(i, k) * distances(i, k);
+      }
+      double Q = 1 / N;
+      double mean = Q * n;
+      double s0 = (q - n * mean) / f;
+      double C = s0 * Q;
+      if (f <= 0) {
+        filtered(i, j) = std::numeric_limits<double>::quiet_NaN();
+        filtered_uncertainties(i, j) = std::numeric_limits<double>::quiet_NaN();
+      } else {
+        filtered(i, j) = mean;
+        filtered_uncertainties(i, j) = C;
+      }
+    }
+  }
+
+  return { std::move(filtered), std::move(filtered_uncertainties) };
+}
+
+std::tuple<EigenSpatiotemporalArray, EigenSpatiotemporalArray>
+robust_weighted_average_filtering(
+  EigenSpatiotemporalArrayConstRef distances,
+  EigenSpatiotemporalArrayConstRef uncertainties,
+  int window_size)
+{
+  if (distances.rows() != uncertainties.rows() ||
+      distances.cols() != uncertainties.cols()) {
+    throw std::runtime_error{
+      "Distance and uncertainty arrays have different shapes"
+    };
+  }
+  if (window_size % 2 == 1) {
+    window_size -= 1;
+  }
+
+  EigenSpatiotemporalArray filtered =
+    EigenSpatiotemporalArray::Zero(distances.rows(), distances.cols());
+  EigenSpatiotemporalArray filtered_uncertainties =
+    EigenSpatiotemporalArray::Zero(distances.rows(), distances.cols());
+
+  std::vector<bool> inliers(window_size);
+
+#pragma omp parallel for firstprivate(inliers)
+  for (int i = 0; i < distances.rows(); ++i) {
+    for (int j = 0; j < distances.cols(); ++j) {
+      int start = std::max(0, j - window_size / 2);
+      int end =
+        std::min(static_cast<int>(distances.cols() - 1), j + window_size / 2);
+      int num_elements = end - start + 1;
+
+      // Detect inliers using RANSAC
+      inliers.assign(inliers.size(), false);
+      int max_inliers = 0;
+      for (int iter = 0; iter < num_elements * 3; ++iter) {
+        int random_index = start + (std::rand() % num_elements);
+        if (std::isnan(distances(i, random_index)) ||
+            std::isnan(uncertainties(i, random_index)) ||
+            uncertainties(i, random_index) <= 0.0) {
+          continue;
+        }
+        double model = distances(i, random_index);
+        int current_inliers = 0;
+        for (int k = start; k <= end; ++k) {
+          if (std::isnan(distances(i, k)) || std::isnan(uncertainties(i, k)) ||
+              uncertainties(i, k) <= 0.0) {
+            continue;
+          }
+          double threshold = 1.96 * std::sqrt(uncertainties(i, k));
+          if (std::fabs(distances(i, k) - model) > threshold) {
+            continue;
+          }
+          current_inliers += 1;
+        }
+        if (current_inliers > max_inliers) {
+          max_inliers = current_inliers;
+          inliers.assign(inliers.size(), false);
+          for (int k = start; k <= end; ++k) {
+            if (std::isnan(distances(i, k)) ||
+                std::isnan(uncertainties(i, k)) || uncertainties(i, k) <= 0.0) {
+              continue;
+            }
+            double threshold = 1.96 * std::sqrt(uncertainties(i, k));
+            if (std::fabs(distances(i, k) - model) > threshold) {
+              continue;
+            }
+            inliers[k - start] = true;
+          }
+        }
+        if (max_inliers > (num_elements * 4 / 3)) {
+          break;
+        }
+      }
+
+      // Compute weighted mean
+      double N = 0.0;
+      double n = 0.0;
+      double q = 0.0;
+      int f = -1;
+      for (int k = start; k <= end; ++k) {
+        double weight = 0.0;
+        if (!std::isnan(uncertainties(i, k)) && !std::isnan(distances(i, k)) &&
+            uncertainties(i, k) > 0.0 && inliers[k - start]) {
+          weight = 1.0 / uncertainties(i, k);
+          f += 1;
+        }
+        N += weight;
+        n += weight * distances(i, k);
+        q += weight * distances(i, k) * distances(i, k);
+      }
+      double Q = 1 / N;
+      double mean = Q * n;
+      double s0 = (q - n * mean) / f;
+      double C = s0 * Q;
+      if (f <= 0) {
+        filtered(i, j) = std::numeric_limits<double>::quiet_NaN();
+        filtered_uncertainties(i, j) = std::numeric_limits<double>::quiet_NaN();
+      } else {
+        filtered(i, j) = mean;
+        filtered_uncertainties(i, j) = C;
+      }
+    }
+  }
+
+  return { std::move(filtered), std::move(filtered_uncertainties) };
+}
+
+std::tuple<EigenSpatiotemporalArray, EigenSpatiotemporalArray>
+_robust_weighted_average_filtering(
+  EigenSpatiotemporalArrayConstRef distances,
+  EigenSpatiotemporalArrayConstRef uncertainties,
+  int window_size)
+{
+  if (distances.rows() != uncertainties.rows() ||
+      distances.cols() != uncertainties.cols()) {
+    throw std::runtime_error{
+      "Distance and uncertainty arrays have different shapes"
+    };
+  }
+
+  EigenSpatiotemporalArray filtered =
+    EigenSpatiotemporalArray::Zero(distances.rows(), distances.cols());
+  EigenSpatiotemporalArray filtered_uncertainties =
+    EigenSpatiotemporalArray::Zero(distances.rows(), distances.cols());
+
   std::vector<double> weights(window_size);
 #pragma omp parallel for firstprivate(weights)
   for (int i = 0; i < distances.rows(); ++i) {
@@ -565,12 +729,13 @@ weighted_average_filtering(EigenSpatiotemporalArrayConstRef distances,
       int start = std::max(0, j - window_size / 2);
       int end =
         std::min(static_cast<int>(distances.cols() - 1), j + window_size / 2);
+
       double weight_sum = 0.0;
       for (int k = start; k <= end; ++k) {
         double weight = 0.0;
         if (!std::isnan(uncertainties(i, k)) && !std::isnan(distances(i, k)) &&
             uncertainties(i, k) > 0.0) {
-          weight = 1.0 / std::sqrt(uncertainties(i, k));
+          weight = 1.0 / uncertainties(i, k);
         }
         weights[k - start] = weight;
         weight_sum += weight;
@@ -591,23 +756,29 @@ weighted_average_filtering(EigenSpatiotemporalArrayConstRef distances,
             s0 += weights[k - start] * std::pow(distances(i, k) - mean, 2);
           }
         }
-        s0 = std::sqrt(s0 / f);
+        s0 = s0 / f;
         double max_w = 0.0;
         int max_w_index = -1;
         for (int k = start; k <= end; ++k) {
           if (weights[k - start] > 0.0) {
             double v = distances(i, k) - mean;
             double w =
-              v / (s0 * std::sqrt(1.0 / weights[k - start] - 1.0 / weight_sum));
-            if (std::fabs(w) > 3.0 && std::fabs(w) > max_w) {
+              v / std::sqrt(s0 * (1.0 / weights[k - start] - 1.0 / weight_sum));
+            if (std::fabs(w) > 2.0 && std::fabs(w) > max_w) {
               max_w = std::fabs(w);
               max_w_index = k - start;
             }
           }
         }
         if (max_w_index == -1) {
-          filtered(i, j) = mean;
-          filtered_uncertainties(i, j) = s0 * std::sqrt(1.0 / weight_sum);
+          if (f <= 0) {
+            filtered(i, j) = std::numeric_limits<double>::quiet_NaN();
+            filtered_uncertainties(i, j) =
+              std::numeric_limits<double>::quiet_NaN();
+          } else {
+            filtered(i, j) = mean;
+            filtered_uncertainties(i, j) = s0 * (1.0 / weight_sum);
+          }
           break;
         } else {
           weight_sum -= weights[max_w_index];
@@ -619,5 +790,4 @@ weighted_average_filtering(EigenSpatiotemporalArrayConstRef distances,
 
   return { std::move(filtered), std::move(filtered_uncertainties) };
 }
-
 }

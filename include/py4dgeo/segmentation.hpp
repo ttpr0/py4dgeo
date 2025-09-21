@@ -131,4 +131,10 @@ weighted_average_filtering(EigenSpatiotemporalArrayConstRef,
                            EigenSpatiotemporalArrayConstRef,
                            int);
 
+/** @brief Applies robust temporal filtering on the time series of distances */
+std::tuple<EigenSpatiotemporalArray, EigenSpatiotemporalArray>
+robust_weighted_average_filtering(EigenSpatiotemporalArrayConstRef,
+                                  EigenSpatiotemporalArrayConstRef,
+                                  int);
+
 } // namespace py4dgeo

@@ -20,6 +20,8 @@ from py4dgeo.segmentation import (
     SpatiotemporalAnalysis,
     regular_corepoint_grid,
     temporal_averaging,
+    weighted_temporal_averaging,
+    obc_fusion,
 )
 from py4dgeo.pcstacking import pointcloud_stacking
 from py4dgeo.util import (

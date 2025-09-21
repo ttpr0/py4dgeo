@@ -172,6 +172,32 @@ class Epoch(_py4dgeo.Epoch):
 
         return self.normals
 
+    def calculate_multiscale_normals(
+        self, radii=(1.0,), orientation_vector: np.ndarray = np.array([0, 0, 1])
+    ):
+        """Calculate point cloud normals
+
+        :param radii:
+            The radii used to determine the neighborhood of a point.
+
+        :param orientation_vector:
+            A vector to determine orientation of the normals. It should point "up".
+        """
+
+        self._validate_search_tree()
+
+        # Reuse the multiscale code with a single radius in order to
+        # avoid code duplication.
+        with logger_context("Calculating point cloud normals:"):
+            self._normals, _ = _py4dgeo.compute_multiscale_directions(
+                self,
+                self.cloud,
+                radii,
+                orientation_vector,
+            )
+
+        return self.normals
+
     def _validate_search_tree(self):
         """ "Check if the default search tree is built"""
 
@@ -496,6 +522,12 @@ class Epoch(_py4dgeo.Epoch):
                 lasfile.write(cloudfile)
                 zf.write(cloudfile, arcname="cloud.laz")
 
+                # Write the covariance matrix array
+                if self.covariances is not None:
+                    covsfile = os.path.join(tmp_dir, "covs.npy")
+                    np.save(covsfile, self.covariances)
+                    zf.write(covsfile, arcname="covs.npy")
+
                 kdtreefile = os.path.join(tmp_dir, "kdtree")
                 with open(kdtreefile, "w") as f:
                     self.kdtree.save_index(kdtreefile)
@@ -545,8 +577,16 @@ class Epoch(_py4dgeo.Epoch):
                     ).transpose()
                 except AttributeError:
                     normals = None
+
+                # Restore the covariance matrix array
+                try:
+                    covsfile = zf.extract("covs.npy", path=tmp_dir)
+                    covs = np.load(covsfile)
+                except KeyError:
+                    covs = None
+
                 # Construct the epoch object
-                epoch = Epoch(cloud, normals=normals, **metadata)
+                epoch = Epoch(cloud, normals=normals, covariances=covs, **metadata)
 
                 # Restore the KDTree object
                 kdtreefile = zf.extract("kdtree", path=tmp_dir)

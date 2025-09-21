@@ -308,19 +308,18 @@ mean_pm_distance(const DistanceUncertaintyCalculationParameters& params)
   Eigen::Vector3d normal = params.normal.transpose();
   Eigen::Vector3d diff_vector = mean2 - mean1;
   double distance = normal.transpose() * diff_vector;
-  double spread1 = normal.transpose() * covariance1 * normal;
-  double spread2 = normal.transpose() * covariance2 * normal;
-  double lod = 1.96 * std::sqrt(normal.transpose() *
-                                (covariance1 + covariance2) * normal) +
-               params.registration_error;
+  double variance1 = normal.transpose() * covariance1 * normal;
+  double variance2 = normal.transpose() * covariance2 * normal;
+  double lod =
+    1.96 * std::sqrt(variance1 + variance2) + params.registration_error;
 
   std::get<0>(ret) = distance;
   std::get<1>(ret).lodetection = lod;
   std::get<1>(ret).spread1 =
-    std::sqrt(spread1 * static_cast<double>(points1.rows()));
+    std::sqrt(variance1 * static_cast<double>(points1.rows()));
   std::get<1>(ret).num_samples1 = points1.rows();
   std::get<1>(ret).spread2 =
-    std::sqrt(spread2 * static_cast<double>(points2.rows()));
+    std::sqrt(variance2 * static_cast<double>(points2.rows()));
   std::get<1>(ret).num_samples2 = points2.rows();
 
   return ret;

@@ -1319,7 +1319,9 @@ def temporal_averaging(distances, smoothing_window=24):
         return smoothed
 
 
-def weighted_temporal_averaging(distances, uncertainties, smoothing_window=24):
+def weighted_temporal_averaging(
+    distances, uncertainties, smoothing_window=24, robust=False
+):
     """Smoothen a space-time array of distance change using a sliding window approach
 
     :param distances:
@@ -1331,16 +1333,21 @@ def weighted_temporal_averaging(distances, uncertainties, smoothing_window=24):
     :type smooting_window: int
     """
 
-    distance_uncertainties = np.sqrt(
+    distance_uncertainties = (
         uncertainties["spread2"] ** 2 / uncertainties["num_samples2"]
     )
-    smoothed_uncertainties = distance_uncertainties.copy()
+    smoothed_uncertainties = uncertainties.copy()
     with logger_context("Smoothing temporal data"):
-        smoothed, _uncertainties = _py4dgeo.weighted_average_filtering(
-            distances, distance_uncertainties, smoothing_window
-        )
+        if robust:
+            smoothed, _uncertainties = _py4dgeo.robust_weighted_average_filtering(
+                distances, distance_uncertainties, smoothing_window
+            )
+        else:
+            smoothed, _uncertainties = _py4dgeo.weighted_average_filtering(
+                distances, distance_uncertainties, smoothing_window
+            )
         smoothed_uncertainties["spread2"] = np.sqrt(
-            _uncertainties**2 * smoothed_uncertainties["num_samples2"]
+            _uncertainties * smoothed_uncertainties["num_samples2"]
         )
         smoothed_uncertainties["lodetection"] = 1.96 * np.sqrt(
             smoothed_uncertainties["spread2"] ** 2
