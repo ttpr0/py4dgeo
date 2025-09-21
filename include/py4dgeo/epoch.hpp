@@ -24,6 +24,8 @@ public:
   Epoch(const EigenPointCloudRef&);
   Epoch(std::shared_ptr<EigenPointCloud>);
   Epoch(const EigenPointCloudRef&, const EigenCovarianceSetRef&);
+  Epoch(std::shared_ptr<EigenPointCloud> cloud_,
+        std::shared_ptr<EigenCovarianceSet> covs_);
 
   // Methods for (de)serialization
   static std::unique_ptr<Epoch> from_stream(std::istream&);
@@ -57,6 +59,7 @@ public:
 private:
   // If this epoch is unserialized, it owns the point cloud
   std::shared_ptr<EigenPointCloud> owned_cloud;
+  std::shared_ptr<EigenCovarianceSet> owned_covariances;
 
   // Default for search operations
   static SearchTree default_radius_search_tree;

@@ -11,6 +11,7 @@ namespace py4dgeo {
 
 Epoch::Epoch(const EigenPointCloudRef& cloud_)
   : owned_cloud(nullptr)
+  , owned_covariances(nullptr)
   , cloud(cloud_)
   , kdtree(cloud_)
   , octree(cloud_)
@@ -19,6 +20,7 @@ Epoch::Epoch(const EigenPointCloudRef& cloud_)
 
 Epoch::Epoch(std::shared_ptr<EigenPointCloud> cloud_)
   : owned_cloud(cloud_)
+  , owned_covariances(nullptr)
   , cloud(*cloud_)
   , kdtree(*cloud_)
   , octree(*cloud_)
@@ -28,10 +30,22 @@ Epoch::Epoch(std::shared_ptr<EigenPointCloud> cloud_)
 Epoch::Epoch(const EigenPointCloudRef& cloud_,
              const EigenCovarianceSetRef& covs_)
   : owned_cloud(nullptr)
+  , owned_covariances(nullptr)
   , cloud(cloud_)
   , kdtree(cloud_)
   , octree(cloud_)
   , covariances(covs_)
+{
+}
+
+Epoch::Epoch(std::shared_ptr<EigenPointCloud> cloud_,
+             std::shared_ptr<EigenCovarianceSet> covs_)
+  : owned_cloud(cloud_)
+  , owned_covariances(covs_)
+  , cloud(*cloud_)
+  , kdtree(*cloud_)
+  , octree(*cloud_)
+  , covariances(*covs_)
 {
 }
 

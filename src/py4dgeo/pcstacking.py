@@ -19,6 +19,7 @@ import _py4dgeo
 
 logger = logging.getLogger("py4dgeo")
 
+
 def pointcloud_stacking(epoch: Epoch, radius: float, max_distance: float) -> Epoch:
     """Stack point cloud of an epoch.
 
@@ -35,6 +36,8 @@ def pointcloud_stacking(epoch: Epoch, radius: float, max_distance: float) -> Epo
     if epoch.covariances is None:
         raise Py4DGeoError("Covariances are required for point cloud stacking.")
 
-    return _py4dgeo.pointcloud_stacking(
-        epoch, radius, max_distance
-    )
+    epoch._validate_search_tree()
+    epoch = _py4dgeo.pointcloud_stacking(epoch, radius, max_distance)
+    cloud = np.asarray(epoch._cloud)
+    covariances = np.asarray(epoch._covariances)
+    return Epoch(cloud, covariances=covariances)
