@@ -574,7 +574,7 @@ linear_regression(const EigenTimeSeriesConstRef times,
   if (n < 2) {
     slope = 0.0;
     intercept = distances(start_index);
-    return;
+    return { slope, intercept };
   }
   for (size_t i = start_index; i <= end_index; ++i) {
     sum_x += times(i);
@@ -612,7 +612,7 @@ ramer_douglas_peucker_recursive(const EigenTimeSeriesConstRef times,
   size_t max_dist_index = 0;
   for (size_t i = start_index + 1; i < end_index; ++i) {
     double dist = line_distance(
-      times(i), distances(i), start_time, start_value, end_time, end_value);
+      times(i), distances(i), start_time, end_time, start_value, end_value);
     if (dist > max_dist) {
       max_dist = dist;
       max_dist_index = i;
