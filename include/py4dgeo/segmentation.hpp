@@ -125,6 +125,24 @@ predict_change_point_detection(EigenTimeSeriesConstRef,
                                IndexType,
                                double);
 
+struct SeedCandidate
+{
+  IndexType start_epoch;
+  IndexType end_epoch;
+};
+
+std::vector<SeedCandidate>
+seed_candidate_detection(const EigenTimeSeriesConstRef times,
+                         const EigenTimeSeriesConstRef distances,
+                         double epsilon,
+                         double min_change_magnitude,
+                         std::size_t min_period);
+
+std::vector<IndexType>
+ramer_douglas_peucker(const EigenTimeSeriesConstRef times,
+                      const EigenTimeSeriesConstRef distances,
+                      double epsilon);
+
 /** @brief Applies temporal filtering on the time series of distances */
 std::tuple<EigenSpatiotemporalArray, EigenSpatiotemporalArray>
 weighted_average_filtering(EigenSpatiotemporalArrayConstRef,

@@ -541,6 +541,181 @@ change_point_detection(const ChangePointDetectionData& data)
   return changepoints;
 }
 
+// compute the y-distance to the line defined by (x1, y1) and (x2, y2)
+double
+line_distance(const double time,
+              const double value,
+              const double time_start,
+              const double time_end,
+              const double value_start,
+              const double value_end)
+{
+  double dx = time_end - time_start;
+  double dy = value_end - value_start;
+  // Handle case where start and end points are the same
+  if (dx == 0 && dy == 0) {
+    return (time - time_start) == 0 ? 0.0 : std::abs(value_start);
+  }
+  double slope = dy / dx;
+  double intercept = value_start - slope * time_start;
+  double expected_value = slope * time + intercept;
+  return std::abs(value - expected_value);
+}
+
+std::tuple<double, double>
+linear_regression(const EigenTimeSeriesConstRef times,
+                  const EigenTimeSeriesConstRef distances,
+                  IndexType start_index,
+                  IndexType end_index)
+{
+  double slope, intercept;
+  double sum_x = 0.0, sum_y = 0.0, sum_xy = 0.0, sum_x2 = 0.0;
+  size_t n = end_index - start_index + 1;
+  if (n < 2) {
+    slope = 0.0;
+    intercept = distances(start_index);
+    return;
+  }
+  for (size_t i = start_index; i <= end_index; ++i) {
+    sum_x += times(i);
+    sum_y += distances(i);
+    sum_xy += times(i) * distances(i);
+    sum_x2 += times(i) * times(i);
+  }
+  double denominator = n * sum_x2 - sum_x * sum_x;
+  if (std::abs(denominator) <
+      1e-9) { // Avoid division by zero if all x are the same
+    slope = 0.0;
+  } else {
+    slope = (n * sum_xy - sum_x * sum_y) / denominator;
+  }
+  intercept = (sum_y - slope * sum_x) / n;
+  return { slope, intercept };
+}
+
+void
+ramer_douglas_peucker_recursive(const EigenTimeSeriesConstRef times,
+                                const EigenTimeSeriesConstRef distances,
+                                IndexType start_index,
+                                IndexType end_index,
+                                double epsilon,
+                                std::vector<bool>& markers)
+{
+  if (end_index <= start_index + 1) {
+    return;
+  }
+  double start_time = times(start_index);
+  double end_time = times(end_index);
+  double start_value = distances(start_index);
+  double end_value = distances(end_index);
+  double max_dist = 0.0;
+  size_t max_dist_index = 0;
+  for (size_t i = start_index + 1; i < end_index; ++i) {
+    double dist = line_distance(
+      times(i), distances(i), start_time, start_value, end_time, end_value);
+    if (dist > max_dist) {
+      max_dist = dist;
+      max_dist_index = i;
+    }
+  }
+  if (max_dist > epsilon) {
+    markers[max_dist_index] = true;
+    ramer_douglas_peucker_recursive(
+      times, distances, start_index, max_dist_index, epsilon, markers);
+    ramer_douglas_peucker_recursive(
+      times, distances, max_dist_index, end_index, epsilon, markers);
+  }
+}
+
+std::vector<IndexType>
+ramer_douglas_peucker(const EigenTimeSeriesConstRef times,
+                      const EigenTimeSeriesConstRef distances,
+                      double epsilon)
+{
+  if (times.size() < 2) {
+    return {};
+  }
+  std::vector<bool> markers(times.size(), false);
+  markers[0] = true;
+  markers[times.size() - 1] = true;
+  ramer_douglas_peucker_recursive(
+    times, distances, 0, times.size() - 1, epsilon, markers);
+  std::vector<IndexType> result;
+  for (size_t i = 0; i < markers.size(); ++i) {
+    if (markers[i]) {
+      result.push_back(i);
+    }
+  }
+  return result;
+}
+
+std::vector<SeedCandidate>
+seed_candidate_detection(const EigenTimeSeriesConstRef times,
+                         const EigenTimeSeriesConstRef distances,
+                         double epsilon,
+                         double min_change_magnitude,
+                         std::size_t min_period)
+{
+  if (times.size() < 2) {
+    return {};
+  }
+  // Simplify time series using RDP to get polygon points
+  std::vector<bool> markers(times.size(), false);
+  markers[0] = true;
+  markers[times.size() - 1] = true;
+  ramer_douglas_peucker_recursive(
+    times, distances, 0, times.size() - 1, epsilon, markers);
+  std::vector<IndexType> polygon_indices;
+  for (IndexType i = 0; i < markers.size(); ++i) {
+    if (markers[i]) {
+      polygon_indices.push_back(i);
+    }
+  }
+  // Iterate through the RDP segments to find significant changes
+  std::vector<SeedCandidate> seeds;
+  int prev_end_idx = -1;
+  double prev_amplitude = std::numeric_limits<double>::quiet_NaN();
+  for (size_t i = 0; i < polygon_indices.size() - 1; ++i) {
+    IndexType start_idx = polygon_indices[i];
+    IndexType end_idx = polygon_indices[i + 1];
+    if (end_idx <= start_idx)
+      continue;
+    // Perform linear regression on the interval
+    auto [slope, intercept] =
+      linear_regression(times, distances, start_idx, end_idx);
+    // Calculate the amplitude of the change from the regression line
+    double start_val = slope * times(start_idx) + intercept;
+    double end_val = slope * times(end_idx) + intercept;
+    double amplitude = end_val - start_val;
+    // If amplitude exceeds the threshold, it's a seed candidate
+    if (std::abs(amplitude) > min_change_magnitude) {
+      // Check if this seed has same direction as previous one
+      if (!std::isnan(prev_amplitude) && (amplitude * prev_amplitude > 0) &&
+          (prev_end_idx == start_idx)) {
+        // Merge with previous seed
+        seeds.back().end_epoch = end_idx;
+      } else {
+        // Add new seed
+        seeds.push_back({ start_idx, end_idx });
+      }
+      prev_amplitude = amplitude;
+      prev_end_idx = end_idx;
+    } else {
+      prev_amplitude = std::numeric_limits<double>::quiet_NaN();
+      prev_end_idx = -1;
+    }
+  }
+  // Filter seeds based on min and max segments
+  std::vector<SeedCandidate> filtered_seeds;
+  for (const auto& seed : seeds) {
+    std::size_t segment_length = seed.end_epoch - seed.start_epoch + 1;
+    if (segment_length >= min_period) {
+      filtered_seeds.push_back(seed);
+    }
+  }
+  return filtered_seeds;
+}
+
 std::tuple<EigenSpatiotemporalArray, EigenSpatiotemporalArray>
 weighted_average_filtering(EigenSpatiotemporalArrayConstRef distances,
                            EigenSpatiotemporalArrayConstRef uncertainties,

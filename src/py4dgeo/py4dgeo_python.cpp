@@ -729,6 +729,12 @@ PYBIND11_MODULE(_py4dgeo, m)
     py::arg("jump"),
     py::arg("penalty"));
 
+  py::class_<SeedCandidate> sc(m, "SeedCandidate");
+  sc.def_property_readonly(
+    "start_epoch", [](const SeedCandidate& self) { return self.start_epoch; });
+  sc.def_property_readonly(
+    "end_epoch", [](const SeedCandidate& self) { return self.end_epoch; });
+
   m.def("transform_pointcloud_inplace",
         [](EigenPointCloudRef cloud,
            const py::array_t<double>& t,
@@ -768,6 +774,8 @@ PYBIND11_MODULE(_py4dgeo, m)
           return region_growing(data, distance_function);
         });
   m.def("change_point_detection", &change_point_detection);
+  m.def("seed_candidate_detection", &seed_candidate_detection);
+  m.def("ramer_douglas_peucker", &ramer_douglas_peucker);
 
   m.def("weighted_average_filtering", &weighted_average_filtering);
   m.def("robust_weighted_average_filtering",
