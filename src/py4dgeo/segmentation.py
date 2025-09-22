@@ -1129,6 +1129,175 @@ class RegionGrowingAlgorithm(RegionGrowingAlgorithmBase):
         return cv <= 0.8
 
 
+class RamerDouglasPeuckerRegionGrowing(RegionGrowingAlgorithm):
+    def __init__(
+        self,
+        seed_subsampling=1,
+        seed_candidates=None,
+        minperiod=24,
+        rdp_epsilon=0.1,
+        rdp_min_change_magnitude=0.1,
+        height_threshold=0.0,
+        check_seed_significance=False,
+        **kwargs,
+    ):
+        """Construct the 4D-OBC algorithm.
+
+        :param seed_subsampling:
+            A subsampling factor for the set of core points for the generation
+            of _segmentation seed candidates. This can be used to speed up
+            the generation of seeds. The default of 1 does not perform any
+            subsampling, a value of, e.g., 10 would only consider every 10th
+            corepoint for adding seeds.
+        :type seed_subsampling: int
+        :param seed_candidates:
+            A set of indices specifying which core points should be used for seed detection. This can be used to perform _segmentation for selected locations. The default of None does not perform any selection and uses all corepoints. The subsampling parameter is applied additionally.
+        :type seed_candidates: list
+        :param minperiod:
+            The minimum period of a detected change to be considered as seed candidate for subsequent
+            _segmentation. The default is 24, corresponding to one day for hourly data.
+        :type minperiod: int
+        :param rdp_epsilon:
+            The epsilon parameter for the Ramer-Douglas-Peucker algorithm. This parameter controls the
+            degree of simplification. A higher value results in fewer detected change points.
+        :type rdp_epsilon: float
+        :param rdp_min_change_magnitude:
+            The minimum change magnitude for a detected change point to be considered as seed candidate.
+            The change magnitude is defined as the absolute difference between the distance values
+            at the start and end epoch of the detected change.
+        :type rdp_min_change_magnitude: float
+        :param height_threshold:
+            The height threshold represents the required magnitude of a detected change to be considered
+            as seed candidate for subsequent _segmentation. The magnitude of a detected change is derived
+            as unsigned difference between magnitude (i.e. distance) at start epoch and peak magnitude.
+            The default is 0.0, in which case all detected changes are used as seed candidates.
+        :type height_threshold: float
+        :param check_seed_significance:
+            If True, a statistical significance test is applied to the detected seed candidates.
+            This can help to reduce the number of seeds, especially when the time series are noisy.
+            Default is False, meaning no significance test is applied.
+        :type check_seed_significance: bool"""
+
+        # Initialize base class
+        super().__init__(**kwargs)
+
+        # Store the given parameters
+        self.seed_subsampling = seed_subsampling
+        self.seed_candidates = seed_candidates
+        self.minperiod = minperiod
+        self.rdp_epsilon = rdp_epsilon
+        self.rdp_min_change_magnitude = rdp_min_change_magnitude
+        self.height_threshold = height_threshold
+        self.check_seed_significance = check_seed_significance
+
+    def find_seedpoints(self):
+        """Calculate seedpoints for the region growing algorithm"""
+        # The list of generated seeds
+        seeds = []
+        # The list of core point indices to check as seeds
+        if self.seed_candidates is None:
+            if self.seed_subsampling == 0:
+                raise Py4DGeoError(
+                    "Subsampling factor cannot be 0, use 1 or any integer larger than 1"
+                )
+            # Use all corepoints if no selection specified, considering subsampling
+            seed_candidates_curr = range(
+                0, self.analysis.distances_for_compute.shape[0], self.seed_subsampling
+            )
+        else:
+            # Use the specified corepoint indices, but consider subsampling
+            seed_candidates_curr = self.seed_candidates  # [::self.seed_subsampling]
+        # Iterate over all time series to analyse their change points
+        timedeltas = self.analysis.timedeltas
+        epochseconds = np.array(
+            [td.total_seconds() for td in timedeltas], dtype=np.float64
+        )
+        for i in seed_candidates_curr:
+            # Extract the time series and interpolate its nan values
+            timeseries = self.analysis.distances_for_compute[i, :]
+            bad_indices = np.isnan(timeseries)
+            num_nans = np.count_nonzero(bad_indices)
+            # If we too many nans, this timeseries does not make sense
+            if num_nans > timeseries.shape[0] - 3:
+                continue
+            # If there are nan values, we try fixing things by interpolation
+            if num_nans > 0:
+                good_indices = np.logical_not(bad_indices)
+                timeseries[bad_indices] = np.interp(
+                    bad_indices.nonzero()[0],
+                    good_indices.nonzero()[0],
+                    timeseries[good_indices],
+                )
+            # Run detection of change points
+            seed_candidates = _py4dgeo.seed_candidate_detection(
+                epochseconds,
+                timeseries,
+                self.rdp_epsilon,
+                self.rdp_min_change_magnitude,
+                self.minperiod,
+            )
+            for seed in seed_candidates:
+                seeds.append(RegionGrowingSeed(i, seed.start_epoch, seed.end_epoch))
+        # Check seed significance if desired
+        if self.check_seed_significance:
+            logger.info("Filtering seeds based on significance")
+            filtered_seeds = []
+            for seed in seeds:
+                distance_start = self.analysis.distances_for_compute[
+                    seed.index, seed.start_epoch
+                ]
+                variance_start = np.sqrt(
+                    self.analysis.uncertainties[seed.index, seed.start_epoch]["spread2"]
+                    ** 2
+                    / self.analysis.uncertainties[seed.index, seed.start_epoch][
+                        "num_samples2"
+                    ]
+                )
+                distance_end = self.analysis.distances_for_compute[
+                    seed.index, seed.end_epoch
+                ]
+                variance_end = np.sqrt(
+                    self.analysis.uncertainties[seed.index, seed.end_epoch]["spread2"]
+                    ** 2
+                    / self.analysis.uncertainties[seed.index, seed.end_epoch][
+                        "num_samples2"
+                    ]
+                )
+                distance_diff = np.abs(distance_end - distance_start)
+                variance_diff = np.sqrt(variance_start**2 + variance_end**2)
+                if distance_diff > 1.96 * variance_diff:  # 95% confidence interval
+                    filtered_seeds.append(seed)
+            logger.info(
+                f"Filtered out {len(seeds) - len(filtered_seeds)}/{len(seeds)} seeds"
+            )
+            seeds = filtered_seeds
+        # use height_threshold instead
+        else:
+            filtered_seeds = []
+            for seed in seeds:
+                distance_start = self.analysis.distances_for_compute[
+                    seed.index, seed.start_epoch
+                ]
+                distance_end = self.analysis.distances_for_compute[
+                    seed.index, seed.end_epoch
+                ]
+                distance_diff = np.abs(distance_end - distance_start)
+                if distance_diff >= self.height_threshold:
+                    filtered_seeds.append(seed)
+            logger.info(
+                f"Filtered out {len(seeds) - len(filtered_seeds)}/{len(seeds)} seeds based on height threshold"
+            )
+            seeds = filtered_seeds
+
+        return seeds
+
+    def _seed_sorting_scorefunction(self):
+        """Neighborhood similarity sorting function"""
+
+    def _filter_objects(self, obj):
+        """A filter for objects produced by the region growing algorithm"""
+
+
 class RegionGrowingSeed:
     def __init__(self, index, start_epoch, end_epoch):
         self._seed = _py4dgeo.RegionGrowingSeed(index, start_epoch, end_epoch)
