@@ -703,6 +703,23 @@ PYBIND11_MODULE(_py4dgeo, m)
            py::arg("min_segments"),
            py::arg("max_segments"));
 
+  py::class_<FullRegionGrowingAlgorithmData> frgwd(
+    m, "FullRegionGrowingAlgorithmData");
+  frgwd.def(py::init<EigenSpatiotemporalArrayConstRef,
+                     const Epoch&,
+                     double,
+                     std::vector<RegionGrowingSeed>,
+                     std::vector<double>,
+                     std::size_t,
+                     std::size_t>(),
+            py::arg("data"),
+            py::arg("epoch"),
+            py::arg("radius"),
+            py::arg("seeds"),
+            py::arg("thresholds"),
+            py::arg("min_segments"),
+            py::arg("max_segments"));
+
   py::class_<TimeseriesDistanceFunctionData> tdfd(
     m, "TimeseriesDistanceFunctionData");
   tdfd.def(py::init<EigenTimeSeriesConstRef, EigenTimeSeriesConstRef>(),
@@ -772,6 +789,16 @@ PYBIND11_MODULE(_py4dgeo, m)
           // The region_growing function may call Python callback functions
           py::gil_scoped_release release_gil;
           return region_growing(data, distance_function);
+        });
+  m.def("full_region_growing",
+        [](const FullRegionGrowingAlgorithmData& data,
+           const TimeseriesDistanceFunction& distance_function,
+           int resume_from_seed,
+           int stop_at_seed) {
+          // The region_growing function may call Python callback functions
+          py::gil_scoped_release release_gil;
+          return full_region_growing(
+            data, distance_function, resume_from_seed, stop_at_seed);
         });
   m.def("change_point_detection", &change_point_detection);
   m.def("seed_candidate_detection", &seed_candidate_detection);

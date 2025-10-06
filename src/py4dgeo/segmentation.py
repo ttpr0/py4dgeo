@@ -1297,6 +1297,100 @@ class RamerDouglasPeuckerRegionGrowing(RegionGrowingAlgorithm):
     def _filter_objects(self, obj):
         """A filter for objects produced by the region growing algorithm"""
 
+    def run(self, analysis, force=False):
+        _py4dgeo.Epoch.set_default_radius_search_tree("octree")
+        """Calculate the _segmentation
+
+        :param analysis:
+            The analysis object we are working with.
+        :type analysis: py4dgeo.segmentation.SpatiotemporalAnalysis
+        :param force:
+            Force recalculation of results. If false, some intermediate results will be
+            restored from the analysis object instead of being recalculated.
+        """
+
+        # Make the analysis object known to all members
+        self._analysis = analysis
+
+        # Enforce the removal of intermediate results
+        if force:
+            analysis.invalidate_results()
+
+        # Return pre-calculated objects if they are available
+        # precalculated = analysis.objects
+        # if precalculated is not None:
+        #     logger.info("Reusing objects by change stored in analysis object")
+        #     return precalculated
+
+        # Check if there are pre-calculated objects.
+        # If so, create objects list from these and continue growing objects, taking into consideration objects that are already grown.
+        # if not initiate new empty objects list
+        precalculated = analysis.objects  # TODO: do not assign to new object
+        if precalculated is not None:
+            logger.info("Reusing objects by change stored in analysis object")
+            objects = (
+                precalculated.copy()
+            )  # test if .copy() solves memory problem, or deepcopy?
+        else:
+            objects = (
+                []
+            )  # TODO: test initializing this in the analysis class, see if it crashes instantly
+
+        # Get corepoints from M3C2 class and build a search tree on them
+        corepoints = as_epoch(analysis.corepoints)
+        corepoints._validate_search_tree()
+
+        # Calculate the list of seed points and sort them
+        seeds = analysis.seeds
+        if seeds is None:
+            with logger_context("Find seed candidates in time series"):
+                seeds = self.find_seedpoints()
+
+            # Sort the seed points
+            with logger_context("Sort seed candidates by priority"):
+                seeds = list(sorted(seeds, key=self.seed_sorting_scorefunction()))
+
+            # Store the seeds
+            analysis.seeds = seeds
+        else:
+            logger.info("Reusing seed candidates stored in analysis object")
+        # write the number of seeds to a separate text file if self.write_nr_seeds is True
+        if self.write_nr_seeds:
+            with open("number_of_seeds.txt", "w") as f:
+                f.write(str(len(seeds)))
+
+        # Apply a numeric default to the max_segments parameter
+        max_segments = self.max_segments
+        if max_segments is None:
+            max_segments = corepoints.cloud.shape[0] + 1
+
+        raw_seeds = [seed._seed for seed in seeds]
+        data = _py4dgeo.FullRegionGrowingAlgorithmData(
+            analysis.distances_for_compute,
+            corepoints,
+            self.neighborhood_radius,
+            raw_seeds,
+            self.thresholds,
+            self.min_segments,
+            max_segments,
+        )
+        obj_datas = _py4dgeo.full_region_growing(
+            data, self.distance_measure(), self.resume_from_seed, self.stop_at_seed
+        )
+        objects = []
+        for seed_index, objdata in obj_datas:
+            obj = ObjectByChange(objdata, seeds[seed_index], analysis)
+            objects.append(obj)
+
+        # Store the results in the analysis object
+        analysis.objects = objects
+
+        # Potentially remove objects from memory
+        del analysis.smoothed_distances
+        del analysis.distances
+
+        return objects
+
 
 class RegionGrowingSeed:
     def __init__(self, index, start_epoch, end_epoch):

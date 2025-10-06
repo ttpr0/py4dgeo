@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstddef>
 #include <functional>
+#include <iostream>
 #include <iterator>
 #include <limits>
 #include <map>
@@ -153,6 +154,68 @@ region_growing(const RegionGrowingAlgorithmData& data,
   }
 
   return objects[objects.size() - 1];
+}
+
+std::vector<std::tuple<int, ObjectByChange>>
+full_region_growing(const FullRegionGrowingAlgorithmData& data,
+                    const TimeseriesDistanceFunction& distance_function,
+                    int resume_from_seed,
+                    int stop_at_seed)
+{
+  std::vector<std::tuple<int, ObjectByChange>> objects;
+  for (int i = 0; i < data.seeds.size(); ++i) {
+    std::cout << "Processing seed " << (i + 1) << " of " << data.seeds.size()
+              << "\n";
+    auto& seed = data.seeds[i];
+    if (i < (resume_from_seed -
+             1)) { // resume from index 0 when `resume_from_seed` == 1
+      continue;
+    }
+    if (i >= (stop_at_seed - 1)) { // stop at index 0 when `stop_at_seed` == 1
+      break;
+    }
+    bool found = false;
+    for (auto& [_, obj] : objects) {
+      if (obj.indices_distances.find(seed.index) !=
+            obj.indices_distances.end() &&
+          ((obj.end_epoch > seed.start_epoch) &&
+           (seed.end_epoch > obj.start_epoch))) {
+        found = true;
+        break;
+      }
+    }
+    if (found) {
+      continue;
+    }
+    RegionGrowingAlgorithmData rg_data{ data.distances,   data.corepoints,
+                                        data.radius,      seed,
+                                        data.thresholds,  data.min_segments,
+                                        data.max_segments };
+    auto objdata = region_growing(rg_data, distance_function);
+    if (objdata.indices_distances.size() >= data.min_segments &&
+        objdata.indices_distances.size() <= data.max_segments) {
+      std::vector<double> distarray;
+      distarray.reserve(objdata.indices_distances.size());
+      for (const auto& pair : objdata.indices_distances) {
+        distarray.push_back(pair.second);
+      }
+      double mean_distarray =
+        std::accumulate(distarray.begin(), distarray.end(), 0.0) /
+        distarray.size();
+      if (mean_distarray == 0.0) {
+        mean_distarray = 1e-10;
+      }
+      double sq_sum = std::inner_product(
+        distarray.begin(), distarray.end(), distarray.begin(), 0.0);
+      double stdev =
+        std::sqrt(sq_sum / distarray.size() - mean_distarray * mean_distarray);
+      double cv = stdev / mean_distarray;
+      if (cv <= 0.8) {
+        objects.push_back(std::make_tuple(i, objdata));
+      }
+    }
+  }
+  return objects;
 }
 
 inline double

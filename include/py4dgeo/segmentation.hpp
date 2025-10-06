@@ -69,6 +69,24 @@ ObjectByChange
 region_growing(const RegionGrowingAlgorithmData&,
                const TimeseriesDistanceFunction&);
 
+struct FullRegionGrowingAlgorithmData
+{
+  EigenSpatiotemporalArrayConstRef distances;
+  const Epoch& corepoints;
+  double radius;
+  std::vector<RegionGrowingSeed> seeds;
+  std::vector<double> thresholds;
+  std::size_t min_segments;
+  std::size_t max_segments;
+};
+
+/** @brief The main region growing algorithm */
+std::vector<std::tuple<int, ObjectByChange>>
+full_region_growing(const FullRegionGrowingAlgorithmData&,
+                    const TimeseriesDistanceFunction&,
+                    int resume_from_seed,
+                    int stop_at_seed);
+
 /** @brief The DTW distance measure implementation used in 4DOBC */
 double
 dtw_distance(const TimeseriesDistanceFunctionData&);
