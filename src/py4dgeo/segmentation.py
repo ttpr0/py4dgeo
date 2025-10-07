@@ -1626,6 +1626,46 @@ def weighted_temporal_averaging(
         return smoothed, smoothed_uncertainties
 
 
+def fast_obc_fusion(
+    obc_list: list[ObjectByChange],
+    spatial_iou_threshold: float = 0.1,
+    temporal_iou_threshold: float = 0.7,
+) -> list[ObjectByChange]:
+    """
+    C++ Implementation of 4D-OBC fusion algorithm by Ulm et al., 2025.
+    """
+    all_components = _py4dgeo.obc_fusion(
+        [obc._data for obc in obc_list], spatial_iou_threshold, temporal_iou_threshold
+    )
+
+    # merge connected obc
+    fused_obcs = []
+    for component_indices in all_components:
+        if not component_indices:
+            continue
+        component_obcs = [obc_list[i] for i in component_indices]
+        fused_indices = {}
+        for obc in component_obcs:
+            fused_indices.update(obc._data.indices_distances)
+        min_start_epoch = min(obc._data.start_epoch for obc in component_obcs)
+        max_end_epoch = max(obc._data.end_epoch for obc in component_obcs)
+        base_obc = component_obcs[0]
+        fused_data = _py4dgeo.ObjectByChange(
+            indices_distances=fused_indices,
+            start_epoch=min_start_epoch,
+            end_epoch=max_end_epoch,
+            threshold=base_obc._data.threshold,
+        )
+        fused_obc = ObjectByChange(
+            _data=fused_data, analysis=base_obc._analysis, seed=base_obc.seed
+        )
+        fused_obcs.append(fused_obc)
+    logger.info(
+        f"Combined {len(obc_list)} 4D-OBCs into {len(fused_obcs)} fused 4D-OBCs."
+    )
+    return fused_obcs
+
+
 def obc_fusion(
     obc_list: list[ObjectByChange],
     spatial_iou_threshold: float = 0.1,

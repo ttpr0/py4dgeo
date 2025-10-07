@@ -161,6 +161,11 @@ ramer_douglas_peucker(const EigenTimeSeriesConstRef times,
                       const EigenTimeSeriesConstRef distances,
                       double epsilon);
 
+std::vector<std::vector<int>>
+obc_fusion(std::vector<ObjectByChange>& objects,
+           double spatial_iou_threshold,
+           double temporal_iou_threshold);
+
 /** @brief Applies temporal filtering on the time series of distances */
 std::tuple<EigenSpatiotemporalArray, EigenSpatiotemporalArray>
 weighted_average_filtering(EigenSpatiotemporalArrayConstRef,

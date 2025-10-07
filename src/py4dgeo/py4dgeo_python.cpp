@@ -804,6 +804,13 @@ PYBIND11_MODULE(_py4dgeo, m)
   m.def("seed_candidate_detection", &seed_candidate_detection);
   m.def("ramer_douglas_peucker", &ramer_douglas_peucker);
 
+  m.def("obc_fusion",
+        &obc_fusion,
+        py::arg("objects"),
+        py::arg("spatial_iou_threshold"),
+        py::arg("temporal_iou_threshold"),
+        "Fuse a list of ObjectByChange based on spatial and temporal IoU");
+
   m.def("weighted_average_filtering", &weighted_average_filtering);
   m.def("robust_weighted_average_filtering",
         &robust_weighted_average_filtering);

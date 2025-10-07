@@ -779,6 +779,114 @@ seed_candidate_detection(const EigenTimeSeriesConstRef times,
   return filtered_seeds;
 }
 
+std::vector<std::vector<int>>
+obc_fusion(std::vector<ObjectByChange>& objects,
+           double spatial_iou_threshold,
+           double temporal_iou_threshold)
+{
+  std::vector<std::vector<int>> adj_list(objects.size());
+  for (int i = 0; i < objects.size(); i++) {
+    for (int j = i + 1; j < objects.size(); j++) {
+      // check sign
+      int sign1 = objects[i].threshold > 0 ? 1 : -1;
+      int sign2 = objects[j].threshold > 0 ? 1 : -1;
+      if (sign1 != sign2) {
+        continue;
+      }
+      // check spatial overlap
+      std::set<IndexType> points1, points2;
+      for (const auto& pair : objects[i].indices_distances) {
+        points1.insert(pair.first);
+      }
+      for (const auto& pair : objects[j].indices_distances) {
+        points2.insert(pair.first);
+      }
+      std::vector<IndexType> intersection_spatial;
+      std::set_intersection(points1.begin(),
+                            points1.end(),
+                            points2.begin(),
+                            points2.end(),
+                            std::back_inserter(intersection_spatial));
+      std::vector<IndexType> union_spatial;
+      std::set_union(points1.begin(),
+                     points1.end(),
+                     points2.begin(),
+                     points2.end(),
+                     std::back_inserter(union_spatial));
+      double iou_spatial =
+        union_spatial.empty()
+          ? 0.0
+          : static_cast<double>(intersection_spatial.size()) /
+              union_spatial.size();
+      if (iou_spatial < spatial_iou_threshold) {
+        continue;
+      }
+      // check temporal overlap
+      std::set<IndexType> epochs1, epochs2;
+      for (IndexType e = objects[i].start_epoch; e <= objects[i].end_epoch;
+           ++e) {
+        epochs1.insert(e);
+      }
+      for (IndexType e = objects[j].start_epoch; e <= objects[j].end_epoch;
+           ++e) {
+        epochs2.insert(e);
+      }
+      std::vector<IndexType> intersection_temporal;
+      std::set_intersection(epochs1.begin(),
+                            epochs1.end(),
+                            epochs2.begin(),
+                            epochs2.end(),
+                            std::back_inserter(intersection_temporal));
+      std::vector<IndexType> union_temporal;
+      std::set_union(epochs1.begin(),
+                     epochs1.end(),
+                     epochs2.begin(),
+                     epochs2.end(),
+                     std::back_inserter(union_temporal));
+      double iou_temporal =
+        union_temporal.empty()
+          ? 0.0
+          : static_cast<double>(intersection_temporal.size()) /
+              union_temporal.size();
+      if (iou_temporal < temporal_iou_threshold) {
+        continue;
+      }
+      adj_list[i].push_back(j);
+      adj_list[j].push_back(i);
+    }
+  }
+
+  std::function<void(int,
+                     const std::vector<std::vector<int>>&,
+                     std::vector<bool>&,
+                     std::vector<int>&)>
+    _dfs_find_component;
+  _dfs_find_component =
+    [&_dfs_find_component](int node_idx,
+                           const std::vector<std::vector<int>>& adj_list,
+                           std::vector<bool>& visited,
+                           std::vector<int>& component) {
+      visited[node_idx] = true;
+      component.push_back(node_idx);
+      for (int neighbor : adj_list[node_idx]) {
+        if (!visited[neighbor]) {
+          _dfs_find_component(neighbor, adj_list, visited, component);
+        }
+      }
+    };
+  std::vector<bool> visited(objects.size(), false);
+  std::vector<std::vector<int>> all_components;
+  for (int i = 0; i < objects.size(); ++i) {
+    if (!visited[i]) {
+      std::vector<int> component_indices;
+      _dfs_find_component(i, adj_list, visited, component_indices);
+      all_components.push_back(component_indices);
+    }
+  }
+
+  return all_components;
+}
+
 std::tuple<EigenSpatiotemporalArray, EigenSpatiotemporalArray>
 weighted_average_filtering(EigenSpatiotemporalArrayConstRef distances,
                            EigenSpatiotemporalArrayConstRef uncertainties,
