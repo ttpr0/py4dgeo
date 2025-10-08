@@ -608,6 +608,14 @@ PYBIND11_MODULE(_py4dgeo, m)
   // The ObjectByChange class is used as the return type for spatiotemporal
   // segmentations
   py::class_<ObjectByChange> obc(m, "ObjectByChange");
+  obc.def(py::init<std::unordered_map<py4dgeo::IndexType, double>,
+                   IndexType,
+                   IndexType,
+                   double>(),
+          py::arg("indices_distances"),
+          py::arg("start_epoch"),
+          py::arg("end_epoch"),
+          py::arg("threshold"));
   obc.def_property_readonly(
     "indices_distances",
     [](const ObjectByChange& self) { return self.indices_distances; });

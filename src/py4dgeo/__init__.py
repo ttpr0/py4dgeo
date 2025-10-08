@@ -22,6 +22,8 @@ from py4dgeo.segmentation import (
     temporal_averaging,
     weighted_temporal_averaging,
     obc_fusion,
+    fast_obc_fusion,
+    RamerDouglasPeuckerRegionGrowing,
 )
 from py4dgeo.pcstacking import pointcloud_stacking
 from py4dgeo.util import (

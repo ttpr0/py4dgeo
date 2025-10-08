@@ -154,6 +154,7 @@ seed_candidate_detection(const EigenTimeSeriesConstRef times,
                          const EigenTimeSeriesConstRef distances,
                          double epsilon,
                          double min_change_magnitude,
+                         double max_slope_difference,
                          std::size_t min_period);
 
 std::vector<IndexType>
@@ -170,12 +171,14 @@ obc_fusion(std::vector<ObjectByChange>& objects,
 std::tuple<EigenSpatiotemporalArray, EigenSpatiotemporalArray>
 weighted_average_filtering(EigenSpatiotemporalArrayConstRef,
                            EigenSpatiotemporalArrayConstRef,
-                           int);
+                           int,
+                           bool);
 
 /** @brief Applies robust temporal filtering on the time series of distances */
 std::tuple<EigenSpatiotemporalArray, EigenSpatiotemporalArray>
 robust_weighted_average_filtering(EigenSpatiotemporalArrayConstRef,
                                   EigenSpatiotemporalArrayConstRef,
-                                  int);
+                                  int,
+                                  bool);
 
 } // namespace py4dgeo

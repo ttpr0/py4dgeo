@@ -717,6 +717,7 @@ seed_candidate_detection(const EigenTimeSeriesConstRef times,
                          const EigenTimeSeriesConstRef distances,
                          double epsilon,
                          double min_change_magnitude,
+                         double max_slope_difference,
                          std::size_t min_period)
 {
   if (times.size() < 2) {
@@ -736,8 +737,10 @@ seed_candidate_detection(const EigenTimeSeriesConstRef times,
   }
   // Iterate through the RDP segments to find significant changes
   std::vector<SeedCandidate> seeds;
+  int prev_start_idx = -1;
   int prev_end_idx = -1;
-  double prev_amplitude = std::numeric_limits<double>::quiet_NaN();
+  double prev_accum_amplitude = 0.0;
+  double prev_slope = 0.0;
   for (size_t i = 0; i < polygon_indices.size() - 1; ++i) {
     IndexType start_idx = polygon_indices[i];
     IndexType end_idx = polygon_indices[i + 1];
@@ -750,23 +753,29 @@ seed_candidate_detection(const EigenTimeSeriesConstRef times,
     double start_val = slope * times(start_idx) + intercept;
     double end_val = slope * times(end_idx) + intercept;
     double amplitude = end_val - start_val;
-    // If amplitude exceeds the threshold, it's a seed candidate
-    if (std::abs(amplitude) > min_change_magnitude) {
-      // Check if this seed has same direction as previous one
-      if (!std::isnan(prev_amplitude) && (amplitude * prev_amplitude > 0) &&
-          (prev_end_idx == start_idx)) {
-        // Merge with previous seed
-        seeds.back().end_epoch = end_idx;
-      } else {
-        // Add new seed
-        seeds.push_back({ start_idx, end_idx });
-      }
-      prev_amplitude = amplitude;
+
+    // Compute angle between slopes
+    double angle = std::abs(std::atan(slope) - std::atan(prev_slope));
+    if ((prev_end_idx == start_idx) && (angle < max_slope_difference) &&
+        (amplitude * prev_accum_amplitude > 0) && (amplitude > epsilon)) {
+      // Merge with previous segment
+      prev_accum_amplitude += amplitude;
+      prev_slope = slope;
       prev_end_idx = end_idx;
     } else {
-      prev_amplitude = std::numeric_limits<double>::quiet_NaN();
-      prev_end_idx = -1;
+      // Add previous segment if it meets criteria
+      if (std::abs(prev_accum_amplitude) > min_change_magnitude) {
+        seeds.push_back({ prev_start_idx, prev_end_idx });
+      }
+      // Start a new segment
+      prev_start_idx = start_idx;
+      prev_end_idx = end_idx;
+      prev_accum_amplitude = amplitude;
+      prev_slope = slope;
     }
+  }
+  if (std::abs(prev_accum_amplitude) > min_change_magnitude) {
+    seeds.push_back({ prev_start_idx, prev_end_idx });
   }
   // Filter seeds based on min and max segments
   std::vector<SeedCandidate> filtered_seeds;
@@ -786,6 +795,8 @@ obc_fusion(std::vector<ObjectByChange>& objects,
 {
   std::vector<std::vector<int>> adj_list(objects.size());
   for (int i = 0; i < objects.size(); i++) {
+    std::cout << "Processing object " << (i + 1) << " of " << objects.size()
+              << "\n";
     for (int j = i + 1; j < objects.size(); j++) {
       // check sign
       int sign1 = objects[i].threshold > 0 ? 1 : -1;
@@ -794,60 +805,39 @@ obc_fusion(std::vector<ObjectByChange>& objects,
         continue;
       }
       // check spatial overlap
-      std::set<IndexType> points1, points2;
+      int intersection_spatial = 0;
       for (const auto& pair : objects[i].indices_distances) {
-        points1.insert(pair.first);
+        if (objects[j].indices_distances.find(pair.first) !=
+            objects[j].indices_distances.end()) {
+          intersection_spatial += 1;
+        }
       }
-      for (const auto& pair : objects[j].indices_distances) {
-        points2.insert(pair.first);
-      }
-      std::vector<IndexType> intersection_spatial;
-      std::set_intersection(points1.begin(),
-                            points1.end(),
-                            points2.begin(),
-                            points2.end(),
-                            std::back_inserter(intersection_spatial));
-      std::vector<IndexType> union_spatial;
-      std::set_union(points1.begin(),
-                     points1.end(),
-                     points2.begin(),
-                     points2.end(),
-                     std::back_inserter(union_spatial));
+      int union_spatial = objects[i].indices_distances.size() +
+                          objects[j].indices_distances.size() -
+                          intersection_spatial;
       double iou_spatial =
-        union_spatial.empty()
+        union_spatial == 0
           ? 0.0
-          : static_cast<double>(intersection_spatial.size()) /
-              union_spatial.size();
+          : static_cast<double>(intersection_spatial) / union_spatial;
       if (iou_spatial < spatial_iou_threshold) {
         continue;
       }
       // check temporal overlap
-      std::set<IndexType> epochs1, epochs2;
-      for (IndexType e = objects[i].start_epoch; e <= objects[i].end_epoch;
-           ++e) {
-        epochs1.insert(e);
-      }
-      for (IndexType e = objects[j].start_epoch; e <= objects[j].end_epoch;
-           ++e) {
-        epochs2.insert(e);
-      }
-      std::vector<IndexType> intersection_temporal;
-      std::set_intersection(epochs1.begin(),
-                            epochs1.end(),
-                            epochs2.begin(),
-                            epochs2.end(),
-                            std::back_inserter(intersection_temporal));
-      std::vector<IndexType> union_temporal;
-      std::set_union(epochs1.begin(),
-                     epochs1.end(),
-                     epochs2.begin(),
-                     epochs2.end(),
-                     std::back_inserter(union_temporal));
+      int start1 = objects[i].start_epoch;
+      int end1 = objects[i].end_epoch;
+      int start2 = objects[j].start_epoch;
+      int end2 = objects[j].end_epoch;
+      int intersection_start = std::max(start1, start2);
+      int intersection_end = std::min(end1, end2);
+      int intersection_length =
+        std::max(0, intersection_end - intersection_start + 1);
+      int union_start = std::min(start1, start2);
+      int union_end = std::max(end1, end2);
+      int union_length = union_end - union_start + 1;
       double iou_temporal =
-        union_temporal.empty()
+        union_length == 0
           ? 0.0
-          : static_cast<double>(intersection_temporal.size()) /
-              union_temporal.size();
+          : static_cast<double>(intersection_length) / union_length;
       if (iou_temporal < temporal_iou_threshold) {
         continue;
       }
@@ -890,7 +880,8 @@ obc_fusion(std::vector<ObjectByChange>& objects,
 std::tuple<EigenSpatiotemporalArray, EigenSpatiotemporalArray>
 weighted_average_filtering(EigenSpatiotemporalArrayConstRef distances,
                            EigenSpatiotemporalArrayConstRef uncertainties,
-                           int window_size)
+                           int window_size,
+                           bool relative_weights)
 {
   if (distances.rows() != uncertainties.rows() ||
       distances.cols() != uncertainties.cols()) {
@@ -928,8 +919,11 @@ weighted_average_filtering(EigenSpatiotemporalArrayConstRef distances,
       }
       double Q = 1 / N;
       double mean = Q * n;
-      double s0 = (q - n * mean) / f;
-      double C = s0 * Q;
+      double sigma0 = 1.0;
+      if (relative_weights) {
+        sigma0 = (q - n * mean) / f; // estimate level of variance from the data
+      }
+      double C = sigma0 * Q;
       if (f <= 0) {
         filtered(i, j) = std::numeric_limits<double>::quiet_NaN();
         filtered_uncertainties(i, j) = std::numeric_limits<double>::quiet_NaN();
@@ -947,7 +941,8 @@ std::tuple<EigenSpatiotemporalArray, EigenSpatiotemporalArray>
 robust_weighted_average_filtering(
   EigenSpatiotemporalArrayConstRef distances,
   EigenSpatiotemporalArrayConstRef uncertainties,
-  int window_size)
+  int window_size,
+  bool relative_weights)
 {
   if (distances.rows() != uncertainties.rows() ||
       distances.cols() != uncertainties.cols()) {
@@ -1035,101 +1030,17 @@ robust_weighted_average_filtering(
       }
       double Q = 1 / N;
       double mean = Q * n;
-      double s0 = (q - n * mean) / f;
-      double C = s0 * Q;
+      double sigma0 = 1.0;
+      if (relative_weights) {
+        sigma0 = (q - n * mean) / f; // estimate level of variance from the data
+      }
+      double C = sigma0 * Q;
       if (f <= 0) {
         filtered(i, j) = std::numeric_limits<double>::quiet_NaN();
         filtered_uncertainties(i, j) = std::numeric_limits<double>::quiet_NaN();
       } else {
         filtered(i, j) = mean;
         filtered_uncertainties(i, j) = C;
-      }
-    }
-  }
-
-  return { std::move(filtered), std::move(filtered_uncertainties) };
-}
-
-std::tuple<EigenSpatiotemporalArray, EigenSpatiotemporalArray>
-_robust_weighted_average_filtering(
-  EigenSpatiotemporalArrayConstRef distances,
-  EigenSpatiotemporalArrayConstRef uncertainties,
-  int window_size)
-{
-  if (distances.rows() != uncertainties.rows() ||
-      distances.cols() != uncertainties.cols()) {
-    throw std::runtime_error{
-      "Distance and uncertainty arrays have different shapes"
-    };
-  }
-
-  EigenSpatiotemporalArray filtered =
-    EigenSpatiotemporalArray::Zero(distances.rows(), distances.cols());
-  EigenSpatiotemporalArray filtered_uncertainties =
-    EigenSpatiotemporalArray::Zero(distances.rows(), distances.cols());
-
-  std::vector<double> weights(window_size);
-#pragma omp parallel for firstprivate(weights)
-  for (int i = 0; i < distances.rows(); ++i) {
-    for (int j = 0; j < distances.cols(); ++j) {
-      int start = std::max(0, j - window_size / 2);
-      int end =
-        std::min(static_cast<int>(distances.cols() - 1), j + window_size / 2);
-
-      double weight_sum = 0.0;
-      for (int k = start; k <= end; ++k) {
-        double weight = 0.0;
-        if (!std::isnan(uncertainties(i, k)) && !std::isnan(distances(i, k)) &&
-            uncertainties(i, k) > 0.0) {
-          weight = 1.0 / uncertainties(i, k);
-        }
-        weights[k - start] = weight;
-        weight_sum += weight;
-      }
-      while (true) {
-        int f = -1;
-        double mean = 0.0;
-        for (int k = start; k <= end; ++k) {
-          if (weights[k - start] > 0.0) {
-            mean += weights[k - start] * distances(i, k);
-            f += 1;
-          }
-        }
-        mean /= weight_sum;
-        double s0 = 0.0;
-        for (int k = start; k <= end; ++k) {
-          if (weights[k - start] > 0.0) {
-            s0 += weights[k - start] * std::pow(distances(i, k) - mean, 2);
-          }
-        }
-        s0 = s0 / f;
-        double max_w = 0.0;
-        int max_w_index = -1;
-        for (int k = start; k <= end; ++k) {
-          if (weights[k - start] > 0.0) {
-            double v = distances(i, k) - mean;
-            double w =
-              v / std::sqrt(s0 * (1.0 / weights[k - start] - 1.0 / weight_sum));
-            if (std::fabs(w) > 2.0 && std::fabs(w) > max_w) {
-              max_w = std::fabs(w);
-              max_w_index = k - start;
-            }
-          }
-        }
-        if (max_w_index == -1) {
-          if (f <= 0) {
-            filtered(i, j) = std::numeric_limits<double>::quiet_NaN();
-            filtered_uncertainties(i, j) =
-              std::numeric_limits<double>::quiet_NaN();
-          } else {
-            filtered(i, j) = mean;
-            filtered_uncertainties(i, j) = s0 * (1.0 / weight_sum);
-          }
-          break;
-        } else {
-          weight_sum -= weights[max_w_index];
-          weights[max_w_index] = 0.0;
-        }
       }
     }
   }

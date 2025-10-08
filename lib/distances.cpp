@@ -173,10 +173,6 @@ mean_stddev_distance(const DistanceUncertaintyCalculationParameters& params)
   double variance1 = variance(workingset1, mean1, params.normal);
   double variance2 = variance(workingset2, mean2, params.normal);
 
-  // Calculate the standard deviations for both point clouds
-  double stddev1 = std::sqrt(variance1);
-  double stddev2 = std::sqrt(variance2);
-
   // Calculate the level of detection from above variances
   double lodetection =
     1.96 * (std::sqrt(variance1 / static_cast<double>(workingset1.rows()) +
@@ -184,9 +180,11 @@ mean_stddev_distance(const DistanceUncertaintyCalculationParameters& params)
             params.registration_error);
 
   std::get<1>(ret).lodetection = lodetection;
-  std::get<1>(ret).spread1 = stddev1;
+  std::get<1>(ret).spread1 =
+    std::sqrt(variance1 / static_cast<double>(workingset1.rows()));
   std::get<1>(ret).num_samples1 = workingset1.rows();
-  std::get<1>(ret).spread2 = stddev2;
+  std::get<1>(ret).spread2 =
+    std::sqrt(variance2 / static_cast<double>(workingset2.rows()));
   std::get<1>(ret).num_samples2 = workingset2.rows();
 
   return ret;
@@ -253,9 +251,9 @@ median_iqr_distance(const DistanceUncertaintyCalculationParameters& params)
       1.96 * (std::sqrt(iqr1 * iqr1 / static_cast<double>(workingset1.rows()) +
                         iqr2 * iqr2 / static_cast<double>(workingset2.rows())) +
               params.registration_error),
-      iqr1,
+      std::sqrt(iqr1 * iqr1 / static_cast<double>(workingset1.rows())),
       workingset1.rows(),
-      iqr2,
+      std::sqrt(iqr2 * iqr2 / static_cast<double>(workingset2.rows())),
       workingset2.rows() });
 }
 
@@ -315,11 +313,9 @@ mean_pm_distance(const DistanceUncertaintyCalculationParameters& params)
 
   std::get<0>(ret) = distance;
   std::get<1>(ret).lodetection = lod;
-  std::get<1>(ret).spread1 =
-    std::sqrt(variance1 * static_cast<double>(points1.rows()));
+  std::get<1>(ret).spread1 = std::sqrt(variance1);
   std::get<1>(ret).num_samples1 = points1.rows();
-  std::get<1>(ret).spread2 =
-    std::sqrt(variance2 * static_cast<double>(points2.rows()));
+  std::get<1>(ret).spread2 = std::sqrt(variance2);
   std::get<1>(ret).num_samples2 = points2.rows();
 
   return ret;

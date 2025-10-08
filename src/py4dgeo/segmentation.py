@@ -837,7 +837,7 @@ class RegionGrowingAlgorithm(RegionGrowingAlgorithmBase):
         use_unfinished=True,
         intermediate_saving=0,
         resume_from_seed=0,
-        stop_at_seed=np.inf,
+        stop_at_seed=int(1e9),
         write_nr_seeds=False,
         check_seed_significance=False,
         **kwargs,
@@ -1052,23 +1052,15 @@ class RegionGrowingAlgorithm(RegionGrowingAlgorithmBase):
                 distance_start = self.analysis.distances_for_compute[
                     seed.index, seed.start_epoch
                 ]
-                variance_start = np.sqrt(
-                    self.analysis.uncertainties[seed.index, seed.start_epoch]["spread2"]
-                    ** 2
-                    / self.analysis.uncertainties[seed.index, seed.start_epoch][
-                        "num_samples2"
-                    ]
-                )
+                variance_start = self.analysis.uncertainties[
+                    seed.index, seed.start_epoch
+                ]["spread2"]
                 distance_end = self.analysis.distances_for_compute[
                     seed.index, seed.end_epoch
                 ]
-                variance_end = np.sqrt(
-                    self.analysis.uncertainties[seed.index, seed.end_epoch]["spread2"]
-                    ** 2
-                    / self.analysis.uncertainties[seed.index, seed.end_epoch][
-                        "num_samples2"
-                    ]
-                )
+                variance_end = self.analysis.uncertainties[seed.index, seed.end_epoch][
+                    "spread2"
+                ]
                 distance_diff = np.abs(distance_end - distance_start)
                 variance_diff = np.sqrt(variance_start**2 + variance_end**2)
                 print("distance_diff", distance_diff, "variance_diff", variance_diff)
@@ -1137,8 +1129,10 @@ class RamerDouglasPeuckerRegionGrowing(RegionGrowingAlgorithm):
         minperiod=24,
         rdp_epsilon=0.1,
         rdp_min_change_magnitude=0.1,
+        rdp_max_slope_difference=0.0015,
         height_threshold=0.0,
         check_seed_significance=False,
+        significance_level=1.96,
         **kwargs,
     ):
         """Construct the 4D-OBC algorithm.
@@ -1187,8 +1181,10 @@ class RamerDouglasPeuckerRegionGrowing(RegionGrowingAlgorithm):
         self.minperiod = minperiod
         self.rdp_epsilon = rdp_epsilon
         self.rdp_min_change_magnitude = rdp_min_change_magnitude
+        self.rdp_max_slope_difference = rdp_max_slope_difference
         self.height_threshold = height_threshold
         self.check_seed_significance = check_seed_significance
+        self.significance_level = significance_level
 
     def find_seedpoints(self):
         """Calculate seedpoints for the region growing algorithm"""
@@ -1209,8 +1205,8 @@ class RamerDouglasPeuckerRegionGrowing(RegionGrowingAlgorithm):
             seed_candidates_curr = self.seed_candidates  # [::self.seed_subsampling]
         # Iterate over all time series to analyse their change points
         timedeltas = self.analysis.timedeltas
-        epochseconds = np.array(
-            [td.total_seconds() for td in timedeltas], dtype=np.float64
+        epochhours = np.array(
+            [td.total_seconds() / 3600 for td in timedeltas], dtype=np.float64
         )
         for i in seed_candidates_curr:
             # Extract the time series and interpolate its nan values
@@ -1230,10 +1226,11 @@ class RamerDouglasPeuckerRegionGrowing(RegionGrowingAlgorithm):
                 )
             # Run detection of change points
             seed_candidates = _py4dgeo.seed_candidate_detection(
-                epochseconds,
+                epochhours,
                 timeseries,
                 self.rdp_epsilon,
                 self.rdp_min_change_magnitude,
+                self.rdp_max_slope_difference,
                 self.minperiod,
             )
             for seed in seed_candidates:
@@ -1246,26 +1243,20 @@ class RamerDouglasPeuckerRegionGrowing(RegionGrowingAlgorithm):
                 distance_start = self.analysis.distances_for_compute[
                     seed.index, seed.start_epoch
                 ]
-                variance_start = np.sqrt(
-                    self.analysis.uncertainties[seed.index, seed.start_epoch]["spread2"]
-                    ** 2
-                    / self.analysis.uncertainties[seed.index, seed.start_epoch][
-                        "num_samples2"
-                    ]
-                )
+                variance_start = self.analysis.uncertainties[
+                    seed.index, seed.start_epoch
+                ]["spread2"]
                 distance_end = self.analysis.distances_for_compute[
                     seed.index, seed.end_epoch
                 ]
-                variance_end = np.sqrt(
-                    self.analysis.uncertainties[seed.index, seed.end_epoch]["spread2"]
-                    ** 2
-                    / self.analysis.uncertainties[seed.index, seed.end_epoch][
-                        "num_samples2"
-                    ]
-                )
+                variance_end = self.analysis.uncertainties[seed.index, seed.end_epoch][
+                    "spread2"
+                ]
                 distance_diff = np.abs(distance_end - distance_start)
                 variance_diff = np.sqrt(variance_start**2 + variance_end**2)
-                if distance_diff > 1.96 * variance_diff:  # 95% confidence interval
+                if (
+                    distance_diff > self.significance_level * variance_diff
+                ):  # 95% confidence interval
                     filtered_seeds.append(seed)
             logger.info(
                 f"Filtered out {len(seeds) - len(filtered_seeds)}/{len(seeds)} seeds"
@@ -1477,7 +1468,10 @@ class ObjectByChange:
         seed_ts = self._analysis.distances_for_compute[
             self.seed.index, start_epoch:end_epoch
         ]
-        tsax.set_ylim(np.nanmin(seed_ts) * 0.5, np.nanmax(seed_ts) * 1.5)
+        seed_ts_min = np.nanmin(seed_ts)
+        seed_ts_max = np.nanmax(seed_ts)
+        diff = seed_ts_max - seed_ts_min
+        tsax.set_ylim(seed_ts_min - 0.2 * diff, seed_ts_max + 0.4 * diff)
 
         # Create a colormap with distance for this object
         cmap = matplotlib.colormaps.get_cmap("viridis")
@@ -1588,7 +1582,7 @@ def temporal_averaging(distances, smoothing_window=24):
 
 
 def weighted_temporal_averaging(
-    distances, uncertainties, smoothing_window=24, robust=False
+    distances, uncertainties, smoothing_window=24, robust=False, relative_weights=False
 ):
     """Smoothen a space-time array of distance change using a sliding window approach
 
@@ -1601,27 +1595,21 @@ def weighted_temporal_averaging(
     :type smooting_window: int
     """
 
-    distance_uncertainties = (
-        uncertainties["spread2"] ** 2 / uncertainties["num_samples2"]
-    )
+    distance_uncertainties = uncertainties["spread2"] ** 2
     smoothed_uncertainties = uncertainties.copy()
     with logger_context("Smoothing temporal data"):
         if robust:
             smoothed, _uncertainties = _py4dgeo.robust_weighted_average_filtering(
-                distances, distance_uncertainties, smoothing_window
+                distances, distance_uncertainties, smoothing_window, relative_weights
             )
         else:
             smoothed, _uncertainties = _py4dgeo.weighted_average_filtering(
-                distances, distance_uncertainties, smoothing_window
+                distances, distance_uncertainties, smoothing_window, relative_weights
             )
-        smoothed_uncertainties["spread2"] = np.sqrt(
-            _uncertainties * smoothed_uncertainties["num_samples2"]
-        )
+        smoothed_uncertainties["spread2"] = np.sqrt(_uncertainties)
         smoothed_uncertainties["lodetection"] = 1.96 * np.sqrt(
             smoothed_uncertainties["spread2"] ** 2
-            / smoothed_uncertainties["num_samples2"]
             + smoothed_uncertainties["spread1"] ** 2
-            / smoothed_uncertainties["num_samples1"]
         )
         return smoothed, smoothed_uncertainties
 
@@ -1657,7 +1645,7 @@ def fast_obc_fusion(
             threshold=base_obc._data.threshold,
         )
         fused_obc = ObjectByChange(
-            _data=fused_data, analysis=base_obc._analysis, seed=base_obc.seed
+            data=fused_data, analysis=base_obc._analysis, seed=base_obc.seed
         )
         fused_obcs.append(fused_obc)
     logger.info(
@@ -1772,7 +1760,7 @@ def obc_fusion(
             threshold=base_obc._data.threshold,
         )
         fused_obc = ObjectByChange(
-            _data=fused_data, analysis=base_obc._analysis, seed=base_obc.seed
+            data=fused_data, analysis=base_obc._analysis, seed=base_obc.seed
         )
         fused_obcs.append(fused_obc)
     logger.info(f"Combined {num_obcs} 4D-OBCs into {len(fused_obcs)} fused 4D-OBCs.")
